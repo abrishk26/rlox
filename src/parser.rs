@@ -1,0 +1,480 @@
+use crate::*;
+use std::fmt;
+
+pub trait Eval {
+    fn eval(&self) -> Object;
+}
+
+pub enum Expr {
+    Lit(Literal),
+    Group(Box<Grouping>),
+    Unary(Box<Unary>),
+    Binary(Box<Binary>),
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Lit(l) => write!(f, "{}", l),
+            Self::Binary(b) => match b.operator {
+                TokenType::PLUS => write!(f, "({} + {})", b.left, b.right),
+                TokenType::MINUS => write!(f, "({} - {})", b.left, b.right),
+                TokenType::SLASH => write!(f, "({} / {})", b.left, b.right),
+                TokenType::STAR => write!(f, "({} * {})", b.left, b.right),
+                TokenType::LESS => write!(f, "({} < {})", b.left, b.right),
+                TokenType::LESSEQUAL => write!(f, "({} <= {})", b.left, b.right),
+                TokenType::GREATER => write!(f, "({} > {})", b.left, b.right),
+                TokenType::GREATEREQUAL => write!(f, "({} >= {})", b.left, b.right),
+                TokenType::EQUAL => write!(f, "({} = {})", b.left, b.right),
+                TokenType::EQUALEQUAL => write!(f, "({} == {})", b.left, b.right),
+                TokenType::BANGEQUAL => write!(f, "({} != {})", b.left, b.right),
+                _ => unreachable!(),
+            },
+            Self::Unary(u) => match u.operator {
+                TokenType::BANG => write!(f, "(!{})", u.right),
+                TokenType::MINUS => write!(f, "(-{})", u.right),
+                _ => unreachable!(),
+            },
+            Self::Group(g) => write!(f, "({})", g.expr),
+        }
+    }
+}
+
+impl Eval for Expr {
+    fn eval(&self) -> Object {
+        match self {
+            Self::Lit(l) => l.value.clone(),
+            Self::Group(g) => g.expr.eval(),
+            Self::Unary(u) => match u.operator {
+                TokenType::MINUS => match u.right.eval() {
+                    Object::Num(n) => Object::Num(-n),
+                    _ => Object::None,
+                },
+                _ => Object::None,
+            },
+            Self::Binary(b) => b.eval(),
+        }
+    }
+}
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    current: usize,
+}
+
+struct Literal {
+    value: Object,
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+impl Eval for Literal {
+    fn eval(&self) -> Object {
+        self.value.clone()
+    }
+}
+
+struct Grouping {
+    expr: Expr,
+}
+
+struct Unary {
+    operator: TokenType,
+    right: Expr,
+}
+
+struct Binary {
+    left: Expr,
+    operator: TokenType,
+    right: Expr,
+}
+
+impl Eval for Binary {
+    fn eval(&self) -> Object {
+        match self.operator {
+            TokenType::PLUS => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Num(l + r);
+                        }
+                        _ => Object::None,
+                    },
+                    Object::Str(s1) => match right {
+                        Object::Str(s2) => {
+                            let mut res = s1.clone();
+                            res.extend(s2.chars());
+                            return Object::Str(res);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::MINUS => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Num(l - r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::STAR => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Num(l * r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::SLASH => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Num(l / r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::GREATER => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Bool(l > r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::GREATEREQUAL => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Bool(l >= r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::LESS => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Bool(l < r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::LESSEQUAL => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Bool(l <= r);
+                        }
+                        _ => Object::None,
+                    },
+                    _ => Object::None,
+                }
+            }
+            TokenType::EQUALEQUAL => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                println!("left and right on eval: ({}), ({})", self.left, self.right);
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Bool(l == r);
+                        }
+                        _ => Object::None,
+                    },
+                    Object::Str(l) => match right {
+                        Object::Str(r) => {
+                            return Object::Bool(l.eq(&r));
+                        }
+                        _ => Object::None,
+                    },
+                    Object::Bool(l) => match right {
+                        Object::Bool(r) => {
+                            return Object::Bool(l.eq(&r));
+                        }
+                        _ => Object::None,
+                    },
+                    Object::None => match right {
+                        Object::None => return Object::Bool(true),
+                        _ => return Object::Bool(false),
+                    },
+                }
+            }
+            TokenType::BANGEQUAL => {
+                let left = self.left.eval();
+                let right = self.right.eval();
+                println!("left and right on eval: ({}), ({})", self.left, self.right);
+                match left {
+                    Object::Num(l) => match right {
+                        Object::Num(r) => {
+                            return Object::Bool(l != r);
+                        }
+                        _ => Object::None,
+                    },
+                    Object::Str(l) => match right {
+                        Object::Str(r) => {
+                            return Object::Bool(!l.eq(&r));
+                        }
+                        _ => Object::None,
+                    },
+                    Object::Bool(l) => match right {
+                        Object::Bool(r) => {
+                            return Object::Bool(!l.eq(&r));
+                        }
+                        _ => Object::None,
+                    },
+                    Object::None => match right {
+                        Object::None => return Object::Bool(false),
+                        _ => return Object::Bool(true),
+                    },
+                }
+            }
+
+            _ => Object::None,
+        }
+    }
+}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, current: 0 }
+    }
+
+    pub fn expr(&mut self) -> Option<Expr> {
+        self.equality()
+    }
+
+    fn primary(&mut self) -> Option<Expr> {
+        if !self.is_at_end() {
+            let token = &self.tokens[self.current];
+            if token.token_type == TokenType::FALSE {
+                println!("got false");
+            }
+            match token.token_type {
+                TokenType::NUMBER | TokenType::STRING => {
+                    self.current += 1;
+                    println!(
+                        "returning from primary - token type ({:?})",
+                        token.token_type
+                    );
+                    return Some(Expr::Lit(Literal {
+                        value: token.literal.clone(),
+                    }));
+                }
+
+                TokenType::TRUE => {
+                    self.current += 1;
+                    println!(
+                        "returning from primary - token type ({:?})",
+                        token.token_type
+                    );
+                    return Some(Expr::Lit(Literal {
+                        value: Object::Bool(true),
+                    }));
+                }
+
+                TokenType::FALSE => {
+                    self.current += 1;
+                    println!(
+                        "returning from primary - token type ({:?})",
+                        token.token_type
+                    );
+                    return Some(Expr::Lit(Literal {
+                        value: Object::Bool(false),
+                    }));
+                }
+
+                TokenType::NIL => {
+                    self.current += 1;
+                    println!(
+                        "returning from primary - token type ({:?})",
+                        token.token_type
+                    );
+                    return Some(Expr::Lit(Literal {
+                        value: Object::None,
+                    }));
+                }
+
+                TokenType::LEFTPAREN => {
+                    self.current += 1;
+                    let expr = self.expr()?;
+                    match self.tokens[self.current].token_type {
+                        TokenType::RIGHTPAREN => {
+                            self.current += 1;
+                            return Some(Expr::Group(Box::new(Grouping { expr })));
+                        }
+                        _ => return None,
+                    }
+                }
+                _ => {
+                    println!(
+                        "failing on the first call, token type ({:?})",
+                        token.token_type
+                    );
+                    return None;
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    fn unary(&mut self) -> Option<Expr> {
+        let token = self.tokens[self.current].clone();
+        println!("token type on unary ({:?})", token.token_type);
+        if !self.is_at_end()
+            && (token.token_type == TokenType::BANG || token.token_type == TokenType::MINUS)
+        {
+            self.current += 1;
+            let right = self.unary()?;
+            println!("unary right ({})", right);
+            return Some(Expr::Unary(Box::new(Unary {
+                operator: token.token_type.clone(),
+                right,
+            })));
+        }
+
+        println!("returning from unary");
+        self.primary()
+    }
+
+    fn factor(&mut self) -> Option<Expr> {
+        println!("factor is called");
+        let mut left = self.unary()?;
+        println!("left on factor ( {} )", left);
+        while let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::STAR | TokenType::SLASH => {
+                    let operator = self.tokens[self.current].token_type.clone();
+                    self.current += 1;
+                    let right = self.unary()?;
+                    left = Expr::Binary(Box::new(Binary {
+                        left,
+                        operator,
+                        right,
+                    }));
+                }
+                _ => break,
+            }
+        }
+
+        Some(left)
+    }
+
+    fn term(&mut self) -> Option<Expr> {
+        println!("term is called");
+        let mut left = self.factor()?;
+        println!("left on term ( {} )", left);
+        while let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::PLUS | TokenType::MINUS => {
+                    let operator = self.tokens[self.current].token_type.clone();
+                    self.current += 1;
+                    let right = self.factor()?;
+                    left = Expr::Binary(Box::new(Binary {
+                        left,
+                        operator,
+                        right,
+                    }));
+                }
+                _ => break,
+            }
+        }
+
+        Some(left)
+    }
+
+    fn comparision(&mut self) -> Option<Expr> {
+        println!("comparision is called");
+        let mut left = self.term()?;
+        println!("left on comparision ( {} )", left);
+        while let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::GREATER
+                | TokenType::LESS
+                | TokenType::GREATEREQUAL
+                | TokenType::LESSEQUAL => {
+                    let operator = self.tokens[self.current].token_type.clone();
+                    self.current += 1;
+                    let right = self.term()?;
+                    left = Expr::Binary(Box::new(Binary {
+                        left,
+                        operator,
+                        right,
+                    }));
+                }
+                _ => break,
+            }
+        }
+
+        Some(left)
+    }
+
+    fn equality(&mut self) -> Option<Expr> {
+        println!("equality is called");
+        let mut left = self.comparision()?;
+        println!("left on equality ( {} )", left);
+        while let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::EQUALEQUAL | TokenType::BANGEQUAL => {
+                    let operator = self.tokens[self.current].token_type.clone();
+                    self.current += 1;
+                    let right = self.comparision()?;
+                    left = Expr::Binary(Box::new(Binary {
+                        left,
+                        operator,
+                        right,
+                    }));
+                }
+                _ => break,
+            }
+        }
+
+        Some(left)
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.current >= self.tokens.len() || self.tokens[self.current].token_type == TokenType::EOF
+    }
+
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.current)
+    }
+}
