@@ -1,12 +1,13 @@
 use rlox::Scanner;
-use rlox::parser::{Eval, Parser};
+use rlox::parser::{Exec, Parser};
 
 fn main() {
-    let text = String::from("10 * 10 < 900 != false");
+    let text = String::from("print 2 + 1;");
     let mut scanner = Scanner::new(text.chars().peekable());
     let tokens = scanner.scan_tokens();
     println!("{:?}", tokens);
     let mut parser = Parser::new(tokens);
-    let expr = parser.expr().unwrap();
-    println!("expression ({})\nvalue ({})", expr, expr.eval());
+    for stmt in parser.parse().unwrap() {
+        stmt.exec();
+    }
 }

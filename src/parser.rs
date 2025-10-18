@@ -5,6 +5,24 @@ pub trait Eval {
     fn eval(&self) -> Object;
 }
 
+pub trait Exec {
+    fn exec(&self) {}
+}
+
+pub enum Stmt {
+    Print(Expr),
+    ExprStmt(Expr),
+}
+
+impl Exec for Stmt {
+    fn exec(&self) {
+        match self {
+            Stmt::Print(e) => println!("{}", e.eval()),
+            _ => unreachable!(),
+        }
+    }
+}
+
 pub enum Expr {
     Lit(Literal),
     Group(Box<Grouping>),
@@ -277,7 +295,62 @@ impl Parser {
         Self { tokens, current: 0 }
     }
 
-    pub fn expr(&mut self) -> Option<Expr> {
+    pub fn parse(&mut self) -> Option<Vec<Stmt>> {
+        let mut stmts = Vec::new();
+
+        while self.current < self.tokens.len()
+            && self.tokens[self.current].token_type != TokenType::EOF
+        {
+            let stmt = self.statement()?;
+            stmts.push(stmt);
+        }
+
+        Some(stmts)
+    }
+
+    fn statement(&mut self) -> Option<Stmt> {
+        if let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::PRINT => {
+                    self.current += 1;
+                    return self.print_statement();
+                }
+
+                _ => {
+                    self.current += 1;
+                    return self.expression_statement();
+                }
+            }
+        }
+
+        None
+    }
+
+    fn print_statement(&mut self) -> Option<Stmt> {
+        let expr = self.expr()?;
+
+        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
+            return None;
+        }
+
+        self.current += 1;
+
+        Some(Stmt::Print(expr))
+    }
+
+    fn expression_statement(&mut self) -> Option<Stmt> {
+        let expr = self.expr()?;
+
+        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
+            return None;
+        }
+
+        self.current += 1;
+
+        Some(Stmt::ExprStmt(expr))
+    }
+
+    fn expr(&mut self) -> Option<Expr> {
         self.equality()
     }
 
