@@ -1,33 +1,58 @@
-use crate::*;
-use std::fmt;
+use crate::types::{Object, Token, TokenType};
+use std::{collections::HashMap, fmt};
+
+pub struct Interpreter {
+    env: HashMap<String, Object>,
+    stmts: Vec<Stmt>,
+}
+
+impl Interpreter {
+    pub fn new(stmts: Vec<Stmt>) -> Self {
+        Self {
+            env: HashMap::new(),
+            stmts,
+        }
+    }
+
+    pub fn parse(&mut self) {
+        for stmt in self.stmts.iter() {
+            stmt.exec(Some(&mut self.env));
+        }
+    }
+}
 
 pub trait Eval {
-    fn eval(&self) -> Object;
+    fn eval(&self, _: Option<&mut HashMap<String, Object>>) -> Object;
 }
 
 pub trait Exec {
-    fn exec(&self) {}
+    fn exec(&self, _: Option<&mut HashMap<String, Object>>) {}
 }
 
+#[derive(Debug)]
 pub enum Stmt {
     Print(Expr),
+    VarStmt(VarStmt),
     ExprStmt(Expr),
 }
 
 impl Exec for Stmt {
-    fn exec(&self) {
+    fn exec(&self, map: Option<&mut HashMap<String, Object>>) {
         match self {
-            Stmt::Print(e) => println!("{}", e.eval()),
+            Stmt::Print(e) => println!("{}", e.eval(map)),
+            Stmt::VarStmt(v) => v.exec(map),
             _ => unreachable!(),
         }
     }
 }
 
+#[derive(Debug)]
 pub enum Expr {
     Lit(Literal),
     Group(Box<Grouping>),
     Unary(Box<Unary>),
     Binary(Box<Binary>),
+    Var(VarStmt),
 }
 
 impl fmt::Display for Expr {
@@ -54,23 +79,25 @@ impl fmt::Display for Expr {
                 _ => unreachable!(),
             },
             Self::Group(g) => write!(f, "({})", g.expr),
+            Self::Var(v) => write!(f, "({})", v.value),
         }
     }
 }
 
 impl Eval for Expr {
-    fn eval(&self) -> Object {
+    fn eval(&self, map: Option<&mut HashMap<String, Object>>) -> Object {
         match self {
             Self::Lit(l) => l.value.clone(),
-            Self::Group(g) => g.expr.eval(),
+            Self::Group(g) => g.expr.eval(None),
             Self::Unary(u) => match u.operator {
-                TokenType::MINUS => match u.right.eval() {
+                TokenType::MINUS => match u.right.eval(None) {
                     Object::Num(n) => Object::Num(-n),
                     _ => Object::None,
                 },
                 _ => Object::None,
             },
-            Self::Binary(b) => b.eval(),
+            Self::Binary(b) => b.eval(None),
+            Self::Var(v) => v.eval(map),
         }
     }
 }
@@ -80,6 +107,7 @@ pub struct Parser {
     current: usize,
 }
 
+#[derive(Debug)]
 struct Literal {
     value: Object,
 }
@@ -91,32 +119,56 @@ impl fmt::Display for Literal {
 }
 
 impl Eval for Literal {
-    fn eval(&self) -> Object {
+    fn eval(&self, _: Option<&mut HashMap<String, Object>>) -> Object {
         self.value.clone()
     }
 }
 
+#[derive(Debug)]
 struct Grouping {
     expr: Expr,
 }
 
+#[derive(Debug)]
 struct Unary {
     operator: TokenType,
     right: Expr,
 }
 
+#[derive(Debug)]
 struct Binary {
     left: Expr,
     operator: TokenType,
     right: Expr,
 }
 
+#[derive(Debug)]
+struct VarStmt {
+    name: String,
+    value: Object,
+}
+
+impl Exec for VarStmt {
+    fn exec(&self, map: Option<&mut HashMap<String, Object>>) {
+        map.unwrap().insert(self.name.clone(), self.value.clone());
+    }
+}
+
+impl Eval for VarStmt {
+    fn eval(&self, map: Option<&mut HashMap<String, Object>>) -> Object {
+        map.unwrap()
+            .get(&self.name)
+            .unwrap_or(&Object::None)
+            .clone()
+    }
+}
+
 impl Eval for Binary {
-    fn eval(&self) -> Object {
+    fn eval(&self, _: Option<&mut HashMap<String, Object>>) -> Object {
         match self.operator {
             TokenType::PLUS => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -136,8 +188,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::MINUS => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -149,8 +201,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::STAR => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -162,8 +214,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::SLASH => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -175,8 +227,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::GREATER => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -188,8 +240,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::GREATEREQUAL => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -201,8 +253,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::LESS => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -214,8 +266,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::LESSEQUAL => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -227,8 +279,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::EQUALEQUAL => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 println!("left and right on eval: ({}), ({})", self.left, self.right);
                 match left {
                     Object::Num(l) => match right {
@@ -256,8 +308,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::BANGEQUAL => {
-                let left = self.left.eval();
-                let right = self.right.eval();
+                let left = self.left.eval(None);
+                let right = self.right.eval(None);
                 println!("left and right on eval: ({}), ({})", self.left, self.right);
                 match left {
                     Object::Num(l) => match right {
@@ -315,7 +367,10 @@ impl Parser {
                     self.current += 1;
                     return self.print_statement();
                 }
-
+                TokenType::VAR => {
+                    self.current += 1;
+                    return self.var_statement();
+                }
                 _ => {
                     self.current += 1;
                     return self.expression_statement();
@@ -324,6 +379,32 @@ impl Parser {
         }
 
         None
+    }
+
+    fn var_statement(&mut self) -> Option<Stmt> {
+        if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
+            return None;
+        }
+
+        let name = self.tokens[self.current].clone();
+        self.current += 1;
+
+        let mut value = Object::None;
+        if self.tokens[self.current].token_type == TokenType::EQUAL {
+            self.current += 1;
+            value = self.expr()?.eval(None);
+        }
+
+        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
+            return None;
+        }
+
+        self.current += 1;
+
+        Some(Stmt::VarStmt(VarStmt {
+            name: name.lexeme.unwrap(),
+            value,
+        }))
     }
 
     fn print_statement(&mut self) -> Option<Stmt> {
@@ -357,9 +438,6 @@ impl Parser {
     fn primary(&mut self) -> Option<Expr> {
         if !self.is_at_end() {
             let token = &self.tokens[self.current];
-            if token.token_type == TokenType::FALSE {
-                println!("got false");
-            }
             match token.token_type {
                 TokenType::NUMBER | TokenType::STRING => {
                     self.current += 1;
@@ -371,7 +449,17 @@ impl Parser {
                         value: token.literal.clone(),
                     }));
                 }
-
+                TokenType::IDENTIFIER => {
+                    self.current += 1;
+                    println!(
+                        "returning from primary - token type ({:?})",
+                        token.token_type
+                    );
+                    return Some(Expr::Var(VarStmt {
+                        name: token.lexeme.clone().unwrap(),
+                        value: token.literal.clone(),
+                    }));
+                }
                 TokenType::TRUE => {
                     self.current += 1;
                     println!(
