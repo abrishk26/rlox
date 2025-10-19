@@ -5,11 +5,11 @@ use std::{collections::HashMap, fmt};
 #[derive(Clone)]
 pub struct Environment {
     map: HashMap<String, Object>,
-    enclosing: Option<Box<Environment>>,
+    enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
-    fn new(enclosing: Option<Box<Environment>>) -> Self {
+    fn new(enclosing: Option<Rc<RefCell<Environment>>>) -> Self {
         Self {
             map: HashMap::new(),
             enclosing,
@@ -17,15 +17,20 @@ impl Environment {
     }
 
     fn get(&self, key: &String) -> Option<Object> {
-        match self.enclosing {
-            Some(ref e) => match self.map.get(key) {
-                Some(o) => Some(o.clone()),
-                _ => e.get(key),
-            },
-            _ => match self.map.get(key) {
-                Some(o) => Some(o.clone()),
-                _ => None,
-            },
+        if let Some(o) = self.map.get(key) {
+            Some(o.clone())
+        } else if let Some(ref e) = self.enclosing {
+            e.borrow().get(key)
+        } else {
+            None
+        }
+    }
+
+    fn assign(&mut self, key: String, value: Object) {
+        if let Some(_) = self.map.get(&key) {
+            self.map.insert(key, value);
+        } else if let Some(ref e) = self.enclosing {
+            e.borrow_mut().assign(key, value)
         }
     }
 
@@ -35,31 +40,31 @@ impl Environment {
 }
 
 pub struct Interpreter {
-    env: Environment,
+    env: Rc<RefCell<Environment>>,
     stmts: Vec<Stmt>,
 }
 
 impl Interpreter {
-    pub fn new(env: Option<Box<Environment>>, stmts: Vec<Stmt>) -> Self {
+    pub fn new(stmts: Vec<Stmt>) -> Self {
         Self {
-            env: Environment::new(None),
+            env: Rc::new(RefCell::new(Environment::new(None))),
             stmts,
         }
     }
 
     pub fn parse(&mut self) {
         for stmt in self.stmts.iter() {
-            stmt.exec(&mut self.env);
+            stmt.exec(self.env.clone());
         }
     }
 }
 
 pub trait Eval {
-    fn eval(&self, _: &mut Environment) -> Object;
+    fn eval(&self, _: Rc<RefCell<Environment>>) -> Object;
 }
 
 pub trait Exec {
-    fn exec(&self, _: &mut Environment) {}
+    fn exec(&self, _: Rc<RefCell<Environment>>) {}
 }
 
 #[derive(Debug)]
@@ -67,15 +72,19 @@ pub enum Stmt {
     Print(Expr),
     VarStmt(VarStmt),
     ExprStmt(Expr),
+    If(Box<IfStmt>),
+    While(Box<WhileStmt>),
     BlockStmt(BlockStmt),
 }
 
 impl Exec for Stmt {
-    fn exec(&self, env: &mut Environment) {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
         match self {
             Stmt::Print(e) => println!("{}", e.eval(env)),
             Stmt::VarStmt(v) => v.exec(env),
             Stmt::ExprStmt(a) => a.exec(env),
+            Stmt::If(i) => i.exec(env),
+            Stmt::While(w) => w.exec(env),
             Stmt::BlockStmt(b) => b.exec(env),
         }
     }
@@ -107,6 +116,8 @@ impl fmt::Display for Expr {
                 TokenType::EQUAL => write!(f, "({} = {})", b.left, b.right),
                 TokenType::EQUALEQUAL => write!(f, "({} == {})", b.left, b.right),
                 TokenType::BANGEQUAL => write!(f, "({} != {})", b.left, b.right),
+                TokenType::OR => write!(f, "({} or {})", b.left, b.right),
+                TokenType::AND => write!(f, "({} and {})", b.left, b.right),
                 _ => unreachable!(),
             },
             Self::Unary(u) => match u.operator {
@@ -122,7 +133,7 @@ impl fmt::Display for Expr {
 }
 
 impl Eval for Expr {
-    fn eval(&self, env: &mut Environment) -> Object {
+    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
         match self {
             Self::Lit(l) => l.value.clone(),
             Self::Group(g) => g.expr.eval(env),
@@ -141,7 +152,7 @@ impl Eval for Expr {
 }
 
 impl Exec for Expr {
-    fn exec(&self, env: &mut Environment) {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
         match self {
             Expr::Assign(a) => a.exec(env),
             _ => unreachable!(),
@@ -155,7 +166,7 @@ pub struct Parser {
 }
 
 #[derive(Debug)]
-struct Literal {
+pub struct Literal {
     value: Object,
 }
 
@@ -166,48 +177,57 @@ impl fmt::Display for Literal {
 }
 
 impl Eval for Literal {
-    fn eval(&self, _: &mut Environment) -> Object {
+    fn eval(&self, _: Rc<RefCell<Environment>>) -> Object {
         self.value.clone()
     }
 }
 
 #[derive(Debug)]
-struct Grouping {
+pub struct Grouping {
     expr: Expr,
 }
 
 #[derive(Debug)]
-struct Unary {
-    operator: TokenType,
-    right: Expr,
+pub struct WhileStmt {
+    condition: Expr,
+    block: Stmt,
 }
 
-#[derive(Debug)]
-struct Binary {
-    left: Expr,
-    operator: TokenType,
-    right: Expr,
-}
-
-#[derive(Debug)]
-struct Assign {
-    name: String,
-    value: Expr,
-}
-
-impl Eval for Assign {
-    fn eval(&self, env: &mut Environment) -> Object {
-        self.exec(env);
-        self.value.eval(env)
+fn is_truthy(expr: Object) -> bool {
+    match expr {
+        Object::Bool(b) => b,
+        Object::None => false,
+        _ => true,
     }
 }
 
-impl Exec for Assign {
-    fn exec(&self, env: &mut Environment) {
-        match env.get(&self.name) {
-            Some(_) => {
-                let value = self.value.eval(env);
-                env.set(self.name.clone(), value);
+impl Exec for WhileStmt {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
+        while is_truthy(self.condition.eval(env.clone())) {
+            self.block.exec(env.clone());
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct IfStmt {
+    condition: Expr,
+    then_block: Stmt,
+    else_block: Option<Stmt>,
+}
+
+impl Exec for IfStmt {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
+        match self.condition.eval(env.clone()) {
+            Object::Bool(b) => {
+                if b {
+                    self.then_block.exec(env.clone());
+                } else {
+                    match self.else_block {
+                        Some(ref s) => s.exec(env.clone()),
+                        _ => (),
+                    }
+                }
             }
             _ => (),
         }
@@ -215,51 +235,86 @@ impl Exec for Assign {
 }
 
 #[derive(Debug)]
-struct VarExpr {
-    name: String,
+pub struct Unary {
+    operator: TokenType,
+    right: Expr,
 }
 
-impl Eval for VarExpr {
-    fn eval(&self, env: &mut Environment) -> Object {
-        env.get(&self.name).unwrap_or(Object::None).clone()
+#[derive(Debug)]
+pub struct Binary {
+    left: Expr,
+    operator: TokenType,
+    right: Expr,
+}
+
+#[derive(Debug)]
+pub struct Assign {
+    name: String,
+    value: Expr,
+}
+
+impl Eval for Assign {
+    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
+        self.exec(env.clone());
+        self.value.eval(env.clone())
+    }
+}
+
+impl Exec for Assign {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
+        let value = self.value.eval(env.clone());
+        env.borrow_mut().assign(self.name.clone(), value);
     }
 }
 
 #[derive(Debug)]
-struct VarStmt {
+pub struct VarExpr {
+    name: String,
+}
+
+impl Eval for VarExpr {
+    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
+        env.borrow_mut()
+            .get(&self.name)
+            .unwrap_or(Object::None)
+            .clone()
+    }
+}
+
+#[derive(Debug)]
+pub struct VarStmt {
     name: String,
     value: Option<Expr>,
 }
 
 impl Exec for VarStmt {
-    fn exec(&self, env: &mut Environment) {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
         let value = match self.value {
-            Some(ref e) => e.eval(env),
+            Some(ref e) => e.eval(env.clone()),
             _ => Object::None,
         };
-        env.set(self.name.clone(), value.clone());
+        env.borrow_mut().set(self.name.clone(), value.clone());
     }
 }
 
 #[derive(Debug)]
-struct BlockStmt {
+pub struct BlockStmt {
     stmts: Vec<Stmt>,
 }
 
 impl Exec for BlockStmt {
-    fn exec(&self, env: &mut Environment) {
-        let mut e = Environment::new(Some(Box::new(env.clone())));
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
         for stmt in self.stmts.iter() {
-            stmt.exec(&mut e);
+            stmt.exec(env.clone());
         }
     }
 }
 
 impl Eval for Binary {
-    fn eval(&self, env: &mut Environment) -> Object {
+    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
         match self.operator {
             TokenType::PLUS => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -280,7 +335,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::MINUS => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -293,7 +348,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::STAR => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -306,7 +361,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::SLASH => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -319,7 +374,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::GREATER => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -332,7 +387,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::GREATEREQUAL => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -345,7 +400,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::LESS => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -358,7 +413,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::LESSEQUAL => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 match left {
                     Object::Num(l) => match right {
@@ -371,7 +426,7 @@ impl Eval for Binary {
                 }
             }
             TokenType::EQUALEQUAL => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
                 println!("left and right on eval: ({}), ({})", self.left, self.right);
                 match left {
@@ -400,9 +455,8 @@ impl Eval for Binary {
                 }
             }
             TokenType::BANGEQUAL => {
-                let left = self.left.eval(env);
+                let left = self.left.eval(env.clone());
                 let right = self.right.eval(env);
-                println!("left and right on eval: ({}), ({})", self.left, self.right);
                 match left {
                     Object::Num(l) => match right {
                         Object::Num(r) => {
@@ -428,7 +482,42 @@ impl Eval for Binary {
                     },
                 }
             }
-
+            TokenType::OR => {
+                let left = self.left.eval(env.clone());
+                let right = self.right.eval(env);
+                match left {
+                    Object::Bool(l) => {
+                        if l {
+                            return left;
+                        }
+                        match right {
+                            Object::Bool(_) => {
+                                return right;
+                            }
+                            _ => Object::None,
+                        }
+                    }
+                    _ => Object::None,
+                }
+            }
+            TokenType::AND => {
+                let left = self.left.eval(env.clone());
+                let right = self.right.eval(env);
+                match left {
+                    Object::Bool(l) => {
+                        if !l {
+                            return left;
+                        }
+                        match right {
+                            Object::Bool(_) => {
+                                return right;
+                            }
+                            _ => Object::None,
+                        }
+                    }
+                    _ => Object::None,
+                }
+            }
             _ => Object::None,
         }
     }
@@ -459,6 +548,18 @@ impl Parser {
                     self.current += 1;
                     return self.print_statement();
                 }
+                TokenType::IF => {
+                    self.current += 1;
+                    return self.if_statement();
+                }
+                TokenType::FOR => {
+                    self.current += 1;
+                    return self.for_statement();
+                }
+                TokenType::WHILE => {
+                    self.current += 1;
+                    return self.while_statement();
+                }
                 TokenType::LEFTBRACE => {
                     self.current += 1;
                     return self.block_statement();
@@ -468,13 +569,130 @@ impl Parser {
                     return self.var_statement();
                 }
                 _ => {
-                    println!("other statemetn being callled");
                     return self.expression_statement();
                 }
             }
         }
 
         None
+    }
+
+    fn for_statement(&mut self) -> Option<Stmt> {
+        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
+            return None;
+        }
+
+        self.current += 1;
+
+        let initializer;
+        if self.tokens[self.current].token_type == TokenType::SEMICOLON {
+            initializer = None;
+        } else if self.tokens[self.current].token_type == TokenType::VAR {
+            self.current += 1;
+            initializer = Some(self.var_statement()?);
+        } else {
+            initializer = Some(self.expression_statement()?);
+        }
+
+        let mut condition = None;
+        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
+            condition = Some(self.expr()?);
+        }
+
+        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
+            return None;
+        }
+
+        self.current += 1;
+
+        let mut increment = None;
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            increment = Some(self.expr()?);
+        }
+
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            return None;
+        }
+
+        self.current += 1;
+
+        let mut body = self.statement()?;
+
+        if let Some(i) = increment {
+            body = Stmt::BlockStmt(BlockStmt {
+                stmts: vec![body, Stmt::ExprStmt(i)],
+            });
+        }
+
+        match condition {
+            Some(_) => (),
+            _ => {
+                condition = Some(Expr::Lit(Literal {
+                    value: Object::Bool(true),
+                }));
+            }
+        }
+
+        body = Stmt::While(Box::new(WhileStmt {
+            condition: condition.unwrap(),
+            block: body,
+        }));
+
+        if let Some(i) = initializer {
+            body = Stmt::BlockStmt(BlockStmt {
+                stmts: vec![i, body],
+            });
+        }
+
+        Some(body)
+    }
+    fn while_statement(&mut self) -> Option<Stmt> {
+        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
+            return None;
+        }
+
+        self.current += 1;
+        let condition = self.expr()?;
+
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            return None;
+        }
+
+        self.current += 1;
+
+        let block = self.statement()?;
+
+        Some(Stmt::While(Box::new(WhileStmt { condition, block })))
+    }
+
+    fn if_statement(&mut self) -> Option<Stmt> {
+        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
+            return None;
+        }
+
+        self.current += 1;
+        let condition = self.expr()?;
+
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            return None;
+        }
+
+        self.current += 1;
+
+        let then_block = self.statement()?;
+        let mut else_block = None;
+        if self.current < self.tokens.len()
+            && self.tokens[self.current].token_type == TokenType::ELSE
+        {
+            self.current += 1;
+            else_block = Some(self.statement()?);
+        }
+
+        Some(Stmt::If(Box::new(IfStmt {
+            condition,
+            then_block,
+            else_block,
+        })))
     }
 
     fn block_statement(&mut self) -> Option<Stmt> {
@@ -532,7 +750,6 @@ impl Parser {
 
     fn expression_statement(&mut self) -> Option<Stmt> {
         let expr = self.expr()?;
-        println!("expression on other statemetn ({})", expr);
 
         if self.tokens[self.current].token_type != TokenType::SEMICOLON {
             return None;
@@ -553,30 +770,18 @@ impl Parser {
             match token.token_type {
                 TokenType::NUMBER | TokenType::STRING => {
                     self.current += 1;
-                    println!(
-                        "returning from primary - token type ({:?})",
-                        token.token_type
-                    );
                     return Some(Expr::Lit(Literal {
                         value: token.literal.clone(),
                     }));
                 }
                 TokenType::IDENTIFIER => {
                     self.current += 1;
-                    println!(
-                        "returning from primary - token type ({:?})",
-                        token.token_type
-                    );
                     return Some(Expr::Var(VarExpr {
                         name: token.lexeme.clone().unwrap(),
                     }));
                 }
                 TokenType::TRUE => {
                     self.current += 1;
-                    println!(
-                        "returning from primary - token type ({:?})",
-                        token.token_type
-                    );
                     return Some(Expr::Lit(Literal {
                         value: Object::Bool(true),
                     }));
@@ -584,10 +789,6 @@ impl Parser {
 
                 TokenType::FALSE => {
                     self.current += 1;
-                    println!(
-                        "returning from primary - token type ({:?})",
-                        token.token_type
-                    );
                     return Some(Expr::Lit(Literal {
                         value: Object::Bool(false),
                     }));
@@ -595,10 +796,6 @@ impl Parser {
 
                 TokenType::NIL => {
                     self.current += 1;
-                    println!(
-                        "returning from primary - token type ({:?})",
-                        token.token_type
-                    );
                     return Some(Expr::Lit(Literal {
                         value: Object::None,
                     }));
@@ -616,10 +813,6 @@ impl Parser {
                     }
                 }
                 _ => {
-                    println!(
-                        "failing on the first call, token type ({:?})",
-                        token.token_type
-                    );
                     return None;
                 }
             }
@@ -630,27 +823,22 @@ impl Parser {
 
     fn unary(&mut self) -> Option<Expr> {
         let token = self.tokens[self.current].clone();
-        println!("token type on unary ({:?})", token.token_type);
         if !self.is_at_end()
             && (token.token_type == TokenType::BANG || token.token_type == TokenType::MINUS)
         {
             self.current += 1;
             let right = self.unary()?;
-            println!("unary right ({})", right);
             return Some(Expr::Unary(Box::new(Unary {
                 operator: token.token_type.clone(),
                 right,
             })));
         }
 
-        println!("returning from unary");
         self.primary()
     }
 
     fn factor(&mut self) -> Option<Expr> {
-        println!("factor is called");
         let mut left = self.unary()?;
-        println!("left on factor ( {} )", left);
         while let Some(token) = self.peek() {
             match token.token_type {
                 TokenType::STAR | TokenType::SLASH => {
@@ -671,9 +859,7 @@ impl Parser {
     }
 
     fn term(&mut self) -> Option<Expr> {
-        println!("term is called");
         let mut left = self.factor()?;
-        println!("left on term ( {} )", left);
         while let Some(token) = self.peek() {
             match token.token_type {
                 TokenType::PLUS | TokenType::MINUS => {
@@ -694,9 +880,7 @@ impl Parser {
     }
 
     fn comparision(&mut self) -> Option<Expr> {
-        println!("comparision is called");
         let mut left = self.term()?;
-        println!("left on comparision ( {} )", left);
         while let Some(token) = self.peek() {
             match token.token_type {
                 TokenType::GREATER
@@ -720,9 +904,7 @@ impl Parser {
     }
 
     fn equality(&mut self) -> Option<Expr> {
-        println!("equality is called");
         let mut left = self.comparision()?;
-        println!("left on equality ( {} )", left);
         while let Some(token) = self.peek() {
             match token.token_type {
                 TokenType::EQUALEQUAL | TokenType::BANGEQUAL => {
@@ -742,13 +924,56 @@ impl Parser {
         Some(left)
     }
 
+    fn and(&mut self) -> Option<Expr> {
+        let mut left = self.equality()?;
+
+        while let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::AND => {
+                    let operator = self.tokens[self.current].token_type.clone();
+                    self.current += 1;
+                    let right = self.equality()?;
+                    left = Expr::Binary(Box::new(Binary {
+                        left,
+                        operator,
+                        right,
+                    }));
+                }
+                _ => break,
+            }
+        }
+
+        Some(left)
+    }
+
+    fn or(&mut self) -> Option<Expr> {
+        let mut left = self.and()?;
+
+        while let Some(token) = self.peek() {
+            match token.token_type {
+                TokenType::OR => {
+                    let operator = self.tokens[self.current].token_type.clone();
+                    self.current += 1;
+                    let right = self.and()?;
+                    left = Expr::Binary(Box::new(Binary {
+                        left,
+                        operator,
+                        right,
+                    }));
+                }
+                _ => break,
+            }
+        }
+
+        Some(left)
+    }
+
     fn assignment(&mut self) -> Option<Expr> {
-        let expr = self.equality()?;
-        println!("expression in assignment ({})", expr);
+        let expr = self.or()?;
 
         if self.tokens[self.current].token_type == TokenType::EQUAL {
             self.current += 1;
-            let value = self.assignment()?;
+            let value = self.or()?;
 
             match expr {
                 Expr::Var(v) => {

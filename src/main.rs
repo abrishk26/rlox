@@ -14,7 +14,6 @@ fn main() {
 
 fn run(source: String) {
     Interpreter::new(
-        None,
         Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
             .parse()
             .unwrap(),
