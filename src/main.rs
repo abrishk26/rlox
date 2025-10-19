@@ -1,13 +1,28 @@
 use rlox::parser::{Interpreter, Parser};
 use rlox::scanner::Scanner;
+use std::env;
 
 fn main() {
-    let text = String::from("var test = \"Abreham Kassa\"; print test;");
-    let mut scanner = Scanner::new(text.chars().peekable());
-    let tokens = scanner.scan_tokens();
-    println!("{:?}", tokens);
-    let mut parser = Parser::new(tokens);
-    let stmts = parser.parse().unwrap();
-    let mut interpreter = Interpreter::new(stmts);
-    interpreter.parse();
+    if env::args().len() > 2 {
+        println!("Usage: rlox [script]");
+        return;
+    }
+
+    let file_name = env::args().nth(1).unwrap();
+    run_file(&file_name);
+}
+
+fn run(source: String) {
+    Interpreter::new(
+        None,
+        Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
+            .parse()
+            .unwrap(),
+    )
+    .parse();
+}
+
+fn run_file(path: &str) {
+    let source = std::fs::read_to_string(path).unwrap();
+    run(source);
 }
