@@ -1,3 +1,4 @@
+use crate::parser::{Function, NativeFunc};
 use TokenType::*;
 use std::{collections::HashMap, fmt, sync::LazyLock};
 
@@ -78,6 +79,8 @@ pub enum Object {
     Num(f64),
     Str(String),
     Bool(bool),
+    Func(Function),
+    NativeFunc(NativeFunc),
     None,
 }
 
@@ -87,6 +90,8 @@ impl fmt::Display for Object {
             Self::Num(n) => write!(f, "{}", n),
             Self::Str(s) => write!(f, "{}", s),
             Self::Bool(b) => write!(f, "{}", b),
+            Self::Func(_) => write!(f, "function call"),
+            Self::NativeFunc(_) => write!(f, "native fn"),
             Self::None => write!(f, "nil"),
         }
     }

@@ -59,6 +59,12 @@ impl Interpreter {
     }
 }
 
+// trait to represent that can be called
+pub trait Callable {
+    fn call(&self, arguments: Vec<Object>) -> Object;
+    fn arity(&self) -> usize;
+}
+
 pub trait Eval {
     fn eval(&self, _: Rc<RefCell<Environment>>) -> Object;
 }
@@ -67,7 +73,19 @@ pub trait Exec {
     fn exec(&self, _: Rc<RefCell<Environment>>) {}
 }
 
-#[derive(Debug)]
+// A type represent native `count` function
+struct Count {}
+impl Callable for Count {
+    fn call(&self, _: Vec<Object>) -> Object {
+        Object::Str("Current time. Will be fixed later".to_owned())
+    }
+
+    fn arity(&self) -> usize {
+        0
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Print(Expr),
     VarStmt(VarStmt),
@@ -75,6 +93,7 @@ pub enum Stmt {
     If(Box<IfStmt>),
     While(Box<WhileStmt>),
     BlockStmt(BlockStmt),
+    Fun(FunStmt),
 }
 
 impl Exec for Stmt {
@@ -86,11 +105,12 @@ impl Exec for Stmt {
             Stmt::If(i) => i.exec(env),
             Stmt::While(w) => w.exec(env),
             Stmt::BlockStmt(b) => b.exec(env),
+            Stmt::Fun(f) => f.exec(env),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Lit(Literal),
     Group(Box<Grouping>),
@@ -98,6 +118,7 @@ pub enum Expr {
     Binary(Box<Binary>),
     Var(VarExpr),
     Assign(Box<Assign>),
+    Call(Box<Call>),
 }
 
 impl fmt::Display for Expr {
@@ -128,6 +149,7 @@ impl fmt::Display for Expr {
             Self::Group(g) => write!(f, "({})", g.expr),
             Self::Var(v) => write!(f, "({})", v.name),
             Self::Assign(a) => write!(f, "({} = {})", a.name, a.value),
+            Self::Call(_) => write!(f, "function call"),
         }
     }
 }
@@ -147,6 +169,7 @@ impl Eval for Expr {
             Self::Binary(b) => b.eval(env),
             Self::Var(v) => v.eval(env),
             Self::Assign(a) => a.eval(env),
+            Self::Call(c) => c.eval(env),
         }
     }
 }
@@ -155,6 +178,7 @@ impl Exec for Expr {
     fn exec(&self, env: Rc<RefCell<Environment>>) {
         match self {
             Expr::Assign(a) => a.exec(env),
+            Expr::Call(c) => c.exec(env),
             _ => unreachable!(),
         }
     }
@@ -165,7 +189,106 @@ pub struct Parser {
     current: usize,
 }
 
-#[derive(Debug)]
+// A type representing a function call
+#[derive(Debug, Clone)]
+pub struct Call {
+    calle: Expr,
+    paren: Token,
+    arguments: Vec<Expr>,
+}
+
+impl Eval for Call {
+    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
+        let callee = self.calle.eval(env.clone());
+        let mut args = Vec::new();
+
+        for arg in &self.arguments {
+            args.push(arg.eval(env.clone()));
+        }
+
+        match callee {
+            Object::Func(f) => f.call(args),
+            Object::NativeFunc(f) => f.call(args),
+            _ => Object::None,
+        }
+    }
+}
+
+impl Exec for Call {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
+        self.eval(env);
+    }
+}
+
+// A type representing a function object
+#[derive(Debug, Clone)]
+pub struct Function {
+    name: String,
+    body: Vec<Stmt>,
+    params: Vec<Token>,
+}
+
+impl Callable for Function {
+    fn call(&self, arguments: Vec<Object>) -> Object {
+        let new_env = Rc::new(RefCell::new(Environment::new(None)));
+
+        // Bind parameters to arguments
+        for (param, arg) in self.params.iter().zip(arguments.iter()) {
+            new_env
+                .borrow_mut()
+                .set(param.lexeme.clone().unwrap(), arg.clone());
+        }
+
+        // Execute body
+        for stmt in &self.body {
+            stmt.exec(new_env.clone());
+        }
+
+        Object::None
+    }
+
+    fn arity(&self) -> usize {
+        self.params.len()
+    }
+}
+
+#[derive(Debug, Clone)]
+
+pub struct NativeFunc {
+    name: String,
+    arity: usize,
+    func: fn(Vec<Object>) -> Object,
+}
+
+impl Callable for NativeFunc {
+    fn call(&self, args: Vec<Object>) -> Object {
+        (self.func)(args)
+    }
+
+    fn arity(&self) -> usize {
+        self.arity
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FunStmt {
+    pub name: String,
+    pub params: Vec<Token>,
+    pub body: Vec<Stmt>,
+}
+
+impl Exec for FunStmt {
+    fn exec(&self, env: Rc<RefCell<Environment>>) {
+        let func = Function {
+            name: self.name.clone(),
+            params: self.params.clone(),
+            body: self.body.clone(),
+        };
+        env.borrow_mut().set(self.name.clone(), Object::Func(func));
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Literal {
     value: Object,
 }
@@ -182,12 +305,12 @@ impl Eval for Literal {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Grouping {
     expr: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WhileStmt {
     condition: Expr,
     block: Stmt,
@@ -209,7 +332,7 @@ impl Exec for WhileStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IfStmt {
     condition: Expr,
     then_block: Stmt,
@@ -234,20 +357,20 @@ impl Exec for IfStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Unary {
     operator: TokenType,
     right: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Binary {
     left: Expr,
     operator: TokenType,
     right: Expr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Assign {
     name: String,
     value: Expr,
@@ -267,7 +390,7 @@ impl Exec for Assign {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarExpr {
     name: String,
 }
@@ -281,7 +404,7 @@ impl Eval for VarExpr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarStmt {
     name: String,
     value: Option<Expr>,
@@ -297,7 +420,7 @@ impl Exec for VarStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockStmt {
     stmts: Vec<Stmt>,
 }
@@ -452,6 +575,7 @@ impl Eval for Binary {
                         Object::None => return Object::Bool(true),
                         _ => return Object::Bool(false),
                     },
+                    _ => Object::None,
                 }
             }
             TokenType::BANGEQUAL => {
@@ -480,6 +604,7 @@ impl Eval for Binary {
                         Object::None => return Object::Bool(false),
                         _ => return Object::Bool(true),
                     },
+                    _ => Object::None,
                 }
             }
             TokenType::OR => {
@@ -552,6 +677,10 @@ impl Parser {
                     self.current += 1;
                     return self.if_statement();
                 }
+                TokenType::FUN => {
+                    self.current += 1;
+                    return self.function();
+                }
                 TokenType::FOR => {
                     self.current += 1;
                     return self.for_statement();
@@ -575,6 +704,75 @@ impl Parser {
         }
 
         None
+    }
+
+    fn function(&mut self) -> Option<Stmt> {
+        if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
+            println!("not identifier after `fun`");
+            return None;
+        }
+
+        let name = self.peek().unwrap().clone();
+        self.current += 1;
+
+        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
+            println!("not left paren after identifier");
+            return None;
+        }
+
+        self.current += 1;
+        let mut parameters = Vec::new();
+
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
+                println!("not identifier after left paren");
+                return None;
+            }
+
+            parameters.push(self.tokens[self.current].clone());
+            self.current += 1;
+        }
+
+        while self.tokens[self.current].token_type == TokenType::COMMA {
+            self.current += 1;
+            if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
+                println!("not identifier after comma");
+                return None;
+            }
+            parameters.push(self.tokens[self.current].clone());
+            self.current += 1;
+        }
+
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            println!("couldn't find rightparen");
+            return None;
+        }
+
+        self.current += 1;
+        if self.tokens[self.current].token_type != TokenType::LEFTBRACE {
+            println!("couldn't find leftbrace");
+            return None;
+        }
+
+        self.current += 1;
+        let mut body = Vec::new();
+
+        while self.current < self.tokens.len()
+            && self.tokens[self.current].token_type != TokenType::RIGHTBRACE
+        {
+            let stmt = self.statement()?;
+            body.push(stmt);
+        }
+
+        self.current += 1;
+
+        let function = Stmt::Fun(FunStmt {
+            name: name.lexeme.clone().unwrap(),
+            params: parameters,
+            body,
+        });
+        println!("parsed function successfully");
+        Some(function)
     }
 
     fn for_statement(&mut self) -> Option<Stmt> {
@@ -751,7 +949,9 @@ impl Parser {
     fn expression_statement(&mut self) -> Option<Stmt> {
         let expr = self.expr()?;
 
-        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
+        if self.current < self.tokens.len()
+            && self.tokens[self.current].token_type != TokenType::SEMICOLON
+        {
             return None;
         }
 
@@ -821,6 +1021,49 @@ impl Parser {
         }
     }
 
+    fn finish_call(&mut self, calle: Expr) -> Option<Expr> {
+        let mut arguments = Vec::new();
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            arguments.push(self.expr()?);
+        }
+
+        while self.tokens[self.current].token_type == TokenType::COMMA {
+            self.current += 1;
+            arguments.push(self.expr()?);
+        }
+
+        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
+            println!("couldn't find right parent in function call");
+            return None;
+        }
+
+        let paren = self.tokens[self.current].clone();
+        self.current += 1;
+
+        println!("finished parsing function call");
+        return Some(Expr::Call(Box::new(Call {
+            calle,
+            paren,
+            arguments,
+        })));
+    }
+
+    fn call(&mut self) -> Option<Expr> {
+        let mut expr = self.primary()?;
+        loop {
+            if self.current < self.tokens.len()
+                && self.tokens[self.current].token_type == TokenType::LEFTPAREN
+            {
+                self.current += 1;
+                expr = self.finish_call(expr)?;
+            } else {
+                break;
+            }
+        }
+
+        Some(expr)
+    }
+
     fn unary(&mut self) -> Option<Expr> {
         let token = self.tokens[self.current].clone();
         if !self.is_at_end()
@@ -834,7 +1077,7 @@ impl Parser {
             })));
         }
 
-        self.primary()
+        self.call()
     }
 
     fn factor(&mut self) -> Option<Expr> {
@@ -971,7 +1214,9 @@ impl Parser {
     fn assignment(&mut self) -> Option<Expr> {
         let expr = self.or()?;
 
-        if self.tokens[self.current].token_type == TokenType::EQUAL {
+        if self.current < self.tokens.len()
+            && self.tokens[self.current].token_type == TokenType::EQUAL
+        {
             self.current += 1;
             let value = self.or()?;
 

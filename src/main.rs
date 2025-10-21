@@ -13,12 +13,19 @@ fn main() {
 }
 
 fn run(source: String) {
-    Interpreter::new(
-        Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
-            .parse()
-            .unwrap(),
-    )
-    .parse();
+    let tokens = Scanner::new(source.chars().peekable()).scan_tokens();
+    println!("tokens {:?}", tokens);
+    let stmts = Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
+        .parse()
+        .unwrap();
+    println!("stmts {:?}", stmts);
+    Interpreter::new(stmts).parse();
+    // Interpreter::new(
+    //     Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
+    //         .parse()
+    //         .unwrap(),
+    // )
+    // .parse();
 }
 
 fn run_file(path: &str) {
