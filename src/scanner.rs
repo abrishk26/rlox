@@ -7,6 +7,7 @@ pub struct Scanner<'a> {
     source: Peekable<Chars<'a>>,
     tokens: Vec<Token>,
     line: u64,
+    had_error: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -15,15 +16,27 @@ impl<'a> Scanner<'a> {
             source,
             tokens: Vec::<Token>::new(),
             line: 1,
+            had_error: false,
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Vec<Token> {
+    pub fn error(&mut self, line: u64, message: &str) {
+        self.had_error = true;
+        eprintln!("[line: {}] Error: {}", line, message);
+    }
+
+    pub fn scan_tokens(&mut self) -> Option<Vec<Token>> {
         while !self.is_at_end() {
             self.scan_token();
         }
 
-        self.tokens.clone()
+        if self.had_error {
+            return None;
+        }
+
+        self.tokens
+            .push(Token::new(TokenType::EOF, self.line, None, Object::None));
+        Some(self.tokens.clone())
     }
 
     fn scan_token(&mut self) {
@@ -197,17 +210,28 @@ impl<'a> Scanner<'a> {
             }
             '"' => {
                 let mut buf = String::new();
-                while self.source.peek() != None && *self.source.peek().unwrap() != '"' {
-                    buf.push(*self.source.peek().unwrap());
+                while !self.is_at_end() && *self.source.peek().unwrap() != '"' {
+                    if *self.source.peek().unwrap() == '\n' {
+                        self.line += 1;
+                    } else {
+                        buf.push(*self.source.peek().unwrap());
+                    }
+
                     self.source.next();
                 }
-                self.source.next();
-                self.tokens.push(Token::new(
-                    TokenType::STRING,
-                    self.line,
-                    Some(buf.clone()),
-                    Object::Str(buf),
-                ));
+
+                if self.is_at_end() {
+                    self.error(self.line, "Unterminated string.");
+                } else {
+                    self.source.next();
+
+                    self.tokens.push(Token::new(
+                        TokenType::STRING,
+                        self.line,
+                        Some(buf.clone()),
+                        Object::Str(buf),
+                    ));
+                }
             }
             '0'..='9' => {
                 let mut buf = String::from(c);
@@ -248,11 +272,10 @@ impl<'a> Scanner<'a> {
             }
             ' ' | '\t' | '\r' => (),
             '\n' => self.line += 1,
-            _ => self
-                .tokens
-                .push(Token::new(TokenType::EOF, self.line, None, Object::None)),
+            _ => self.error(self.line, "Unexpected character."),
         }
     }
+
     fn is_at_end(&mut self) -> bool {
         self.source.peek() == None
     }
