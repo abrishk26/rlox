@@ -20,6 +20,13 @@ impl<'a> Scanner<'a> {
         }
     }
 
+    fn is_alpha(c: char) -> bool {
+        match c {
+            '_' | 'a'..='z' | 'A'..='Z' => true,
+            _ => false,
+        }
+    }
+
     pub fn error(&mut self, line: u64, message: &str) {
         self.had_error = true;
         eprintln!("[line: {}] Error: {}", line, message);
@@ -251,8 +258,7 @@ impl<'a> Scanner<'a> {
             }
             '_' | 'a'..='z' | 'A'..='Z' => {
                 let mut buf = String::from(c);
-                while self.source.peek() != None
-                    && (*self.source.peek().unwrap()).is_ascii_alphanumeric()
+                while self.source.peek() != None && Scanner::is_alpha(*self.source.peek().unwrap())
                 {
                     buf.push(*self.source.peek().unwrap());
                     self.source.next();
