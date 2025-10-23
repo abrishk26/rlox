@@ -1,651 +1,10 @@
-use crate::types::{Object, Token, TokenType};
-use std::{cell::RefCell, rc::Rc};
-use std::{collections::HashMap, fmt};
-
-#[derive(Clone)]
-pub struct Environment {
-    map: HashMap<String, Object>,
-    enclosing: Option<Rc<RefCell<Environment>>>,
-}
-
-impl Environment {
-    fn new(enclosing: Option<Rc<RefCell<Environment>>>) -> Self {
-        Self {
-            map: HashMap::new(),
-            enclosing,
-        }
-    }
-
-    fn get(&self, key: &String) -> Option<Object> {
-        if let Some(o) = self.map.get(key) {
-            Some(o.clone())
-        } else if let Some(ref e) = self.enclosing {
-            e.borrow().get(key)
-        } else {
-            None
-        }
-    }
-
-    fn assign(&mut self, key: String, value: Object) {
-        if let Some(_) = self.map.get(&key) {
-            self.map.insert(key, value);
-        } else if let Some(ref e) = self.enclosing {
-            e.borrow_mut().assign(key, value)
-        }
-    }
-
-    fn set(&mut self, key: String, value: Object) {
-        self.map.insert(key, value);
-    }
-}
-
-pub struct Interpreter {
-    env: Rc<RefCell<Environment>>,
-    stmts: Vec<Stmt>,
-}
-
-impl Interpreter {
-    pub fn new(stmts: Vec<Stmt>) -> Self {
-        Self {
-            env: Rc::new(RefCell::new(Environment::new(None))),
-            stmts,
-        }
-    }
-
-    pub fn parse(&mut self) {
-        for stmt in self.stmts.iter() {
-            stmt.exec(self.env.clone());
-        }
-    }
-}
-
-// trait to represent that can be called
-pub trait Callable {
-    fn call(&self, arguments: Vec<Object>) -> Object;
-    fn arity(&self) -> usize;
-}
-
-pub trait Eval {
-    fn eval(&self, _: Rc<RefCell<Environment>>) -> Object;
-}
-
-pub trait Exec {
-    fn exec(&self, _: Rc<RefCell<Environment>>) {}
-}
-
-// A type represent native `count` function
-struct Count {}
-impl Callable for Count {
-    fn call(&self, _: Vec<Object>) -> Object {
-        Object::Str("Current time. Will be fixed later".to_owned())
-    }
-
-    fn arity(&self) -> usize {
-        0
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Stmt {
-    Print(Expr),
-    VarStmt(VarStmt),
-    ExprStmt(Expr),
-    If(Box<IfStmt>),
-    While(Box<WhileStmt>),
-    BlockStmt(BlockStmt),
-    Fun(FunStmt),
-}
-
-impl Exec for Stmt {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        match self {
-            Stmt::Print(e) => println!("{}", e.eval(env)),
-            Stmt::VarStmt(v) => v.exec(env),
-            Stmt::ExprStmt(a) => a.exec(env),
-            Stmt::If(i) => i.exec(env),
-            Stmt::While(w) => w.exec(env),
-            Stmt::BlockStmt(b) => b.exec(env),
-            Stmt::Fun(f) => f.exec(env),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Expr {
-    Lit(Literal),
-    Group(Box<Grouping>),
-    Unary(Box<Unary>),
-    Binary(Box<Binary>),
-    Var(VarExpr),
-    Assign(Box<Assign>),
-    Call(Box<Call>),
-}
-
-impl fmt::Display for Expr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Lit(l) => write!(f, "{}", l),
-            Self::Binary(b) => match b.operator {
-                TokenType::PLUS => write!(f, "({} + {})", b.left, b.right),
-                TokenType::MINUS => write!(f, "({} - {})", b.left, b.right),
-                TokenType::SLASH => write!(f, "({} / {})", b.left, b.right),
-                TokenType::STAR => write!(f, "({} * {})", b.left, b.right),
-                TokenType::LESS => write!(f, "({} < {})", b.left, b.right),
-                TokenType::LESSEQUAL => write!(f, "({} <= {})", b.left, b.right),
-                TokenType::GREATER => write!(f, "({} > {})", b.left, b.right),
-                TokenType::GREATEREQUAL => write!(f, "({} >= {})", b.left, b.right),
-                TokenType::EQUAL => write!(f, "({} = {})", b.left, b.right),
-                TokenType::EQUALEQUAL => write!(f, "({} == {})", b.left, b.right),
-                TokenType::BANGEQUAL => write!(f, "({} != {})", b.left, b.right),
-                TokenType::OR => write!(f, "({} or {})", b.left, b.right),
-                TokenType::AND => write!(f, "({} and {})", b.left, b.right),
-                _ => unreachable!(),
-            },
-            Self::Unary(u) => match u.operator {
-                TokenType::BANG => write!(f, "(!{})", u.right),
-                TokenType::MINUS => write!(f, "(-{})", u.right),
-                _ => unreachable!(),
-            },
-            Self::Group(g) => write!(f, "({})", g.expr),
-            Self::Var(v) => write!(f, "({})", v.name),
-            Self::Assign(a) => write!(f, "({} = {})", a.name, a.value),
-            Self::Call(_) => write!(f, "function call"),
-        }
-    }
-}
-
-impl Eval for Expr {
-    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
-        match self {
-            Self::Lit(l) => l.value.clone(),
-            Self::Group(g) => g.expr.eval(env),
-            Self::Unary(u) => match u.operator {
-                TokenType::MINUS => match u.right.eval(env) {
-                    Object::Num(n) => Object::Num(-n),
-                    _ => Object::None,
-                },
-                _ => Object::None,
-            },
-            Self::Binary(b) => b.eval(env),
-            Self::Var(v) => v.eval(env),
-            Self::Assign(a) => a.eval(env),
-            Self::Call(c) => c.eval(env),
-        }
-    }
-}
-
-impl Exec for Expr {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        match self {
-            Expr::Assign(a) => a.exec(env),
-            Expr::Call(c) => c.exec(env),
-            _ => unreachable!(),
-        }
-    }
-}
+use crate::expressions::{Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable};
+use crate::statements::{Block, Func, IfStmt, Print, Stmt, Var, WhileStmt};
+use crate::scanner::{Object, Token, TokenType};
 
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
-}
-
-// A type representing a function call
-#[derive(Debug, Clone)]
-pub struct Call {
-    calle: Expr,
-    paren: Token,
-    arguments: Vec<Expr>,
-}
-
-impl Eval for Call {
-    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
-        let callee = self.calle.eval(env.clone());
-        let mut args = Vec::new();
-
-        for arg in &self.arguments {
-            args.push(arg.eval(env.clone()));
-        }
-
-        match callee {
-            Object::Func(f) => f.call(args),
-            Object::NativeFunc(f) => f.call(args),
-            _ => Object::None,
-        }
-    }
-}
-
-impl Exec for Call {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        self.eval(env);
-    }
-}
-
-// A type representing a function object
-#[derive(Debug, Clone)]
-pub struct Function {
-    name: String,
-    body: Vec<Stmt>,
-    params: Vec<Token>,
-}
-
-impl Callable for Function {
-    fn call(&self, arguments: Vec<Object>) -> Object {
-        let new_env = Rc::new(RefCell::new(Environment::new(None)));
-
-        // Bind parameters to arguments
-        for (param, arg) in self.params.iter().zip(arguments.iter()) {
-            new_env
-                .borrow_mut()
-                .set(param.lexeme.clone().unwrap(), arg.clone());
-        }
-
-        // Execute body
-        for stmt in &self.body {
-            stmt.exec(new_env.clone());
-        }
-
-        Object::None
-    }
-
-    fn arity(&self) -> usize {
-        self.params.len()
-    }
-}
-
-#[derive(Debug, Clone)]
-
-pub struct NativeFunc {
-    name: String,
-    arity: usize,
-    func: fn(Vec<Object>) -> Object,
-}
-
-impl Callable for NativeFunc {
-    fn call(&self, args: Vec<Object>) -> Object {
-        (self.func)(args)
-    }
-
-    fn arity(&self) -> usize {
-        self.arity
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FunStmt {
-    pub name: String,
-    pub params: Vec<Token>,
-    pub body: Vec<Stmt>,
-}
-
-impl Exec for FunStmt {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        let func = Function {
-            name: self.name.clone(),
-            params: self.params.clone(),
-            body: self.body.clone(),
-        };
-        env.borrow_mut().set(self.name.clone(), Object::Func(func));
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Literal {
-    value: Object,
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.value)
-    }
-}
-
-impl Eval for Literal {
-    fn eval(&self, _: Rc<RefCell<Environment>>) -> Object {
-        self.value.clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Grouping {
-    expr: Expr,
-}
-
-#[derive(Debug, Clone)]
-pub struct WhileStmt {
-    condition: Expr,
-    block: Stmt,
-}
-
-fn is_truthy(expr: Object) -> bool {
-    match expr {
-        Object::Bool(b) => b,
-        Object::None => false,
-        _ => true,
-    }
-}
-
-impl Exec for WhileStmt {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        while is_truthy(self.condition.eval(env.clone())) {
-            self.block.exec(env.clone());
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct IfStmt {
-    condition: Expr,
-    then_block: Stmt,
-    else_block: Option<Stmt>,
-}
-
-impl Exec for IfStmt {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        match self.condition.eval(env.clone()) {
-            Object::Bool(b) => {
-                if b {
-                    self.then_block.exec(env.clone());
-                } else {
-                    match self.else_block {
-                        Some(ref s) => s.exec(env.clone()),
-                        _ => (),
-                    }
-                }
-            }
-            _ => (),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Unary {
-    operator: TokenType,
-    right: Expr,
-}
-
-#[derive(Debug, Clone)]
-pub struct Binary {
-    left: Expr,
-    operator: TokenType,
-    right: Expr,
-}
-
-#[derive(Debug, Clone)]
-pub struct Assign {
-    name: String,
-    value: Expr,
-}
-
-impl Eval for Assign {
-    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
-        self.exec(env.clone());
-        self.value.eval(env.clone())
-    }
-}
-
-impl Exec for Assign {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        let value = self.value.eval(env.clone());
-        env.borrow_mut().assign(self.name.clone(), value);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct VarExpr {
-    name: String,
-}
-
-impl Eval for VarExpr {
-    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
-        env.borrow_mut()
-            .get(&self.name)
-            .unwrap_or(Object::None)
-            .clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct VarStmt {
-    name: String,
-    value: Option<Expr>,
-}
-
-impl Exec for VarStmt {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        let value = match self.value {
-            Some(ref e) => e.eval(env.clone()),
-            _ => Object::None,
-        };
-        env.borrow_mut().set(self.name.clone(), value.clone());
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BlockStmt {
-    stmts: Vec<Stmt>,
-}
-
-impl Exec for BlockStmt {
-    fn exec(&self, env: Rc<RefCell<Environment>>) {
-        for stmt in self.stmts.iter() {
-            stmt.exec(env.clone());
-        }
-    }
-}
-
-impl Eval for Binary {
-    fn eval(&self, env: Rc<RefCell<Environment>>) -> Object {
-        match self.operator {
-            TokenType::PLUS => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Num(l + r);
-                        }
-                        _ => Object::None,
-                    },
-                    Object::Str(s1) => match right {
-                        Object::Str(s2) => {
-                            let mut res = s1.clone();
-                            res.extend(s2.chars());
-                            return Object::Str(res);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::MINUS => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Num(l - r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::STAR => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Num(l * r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::SLASH => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Num(l / r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::GREATER => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Bool(l > r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::GREATEREQUAL => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Bool(l >= r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::LESS => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Bool(l < r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::LESSEQUAL => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Bool(l <= r);
-                        }
-                        _ => Object::None,
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::EQUALEQUAL => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                println!("left and right on eval: ({}), ({})", self.left, self.right);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Bool(l == r);
-                        }
-                        _ => Object::None,
-                    },
-                    Object::Str(l) => match right {
-                        Object::Str(r) => {
-                            return Object::Bool(l.eq(&r));
-                        }
-                        _ => Object::None,
-                    },
-                    Object::Bool(l) => match right {
-                        Object::Bool(r) => {
-                            return Object::Bool(l.eq(&r));
-                        }
-                        _ => Object::None,
-                    },
-                    Object::None => match right {
-                        Object::None => return Object::Bool(true),
-                        _ => return Object::Bool(false),
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::BANGEQUAL => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Num(l) => match right {
-                        Object::Num(r) => {
-                            return Object::Bool(l != r);
-                        }
-                        _ => Object::None,
-                    },
-                    Object::Str(l) => match right {
-                        Object::Str(r) => {
-                            return Object::Bool(!l.eq(&r));
-                        }
-                        _ => Object::None,
-                    },
-                    Object::Bool(l) => match right {
-                        Object::Bool(r) => {
-                            return Object::Bool(!l.eq(&r));
-                        }
-                        _ => Object::None,
-                    },
-                    Object::None => match right {
-                        Object::None => return Object::Bool(false),
-                        _ => return Object::Bool(true),
-                    },
-                    _ => Object::None,
-                }
-            }
-            TokenType::OR => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Bool(l) => {
-                        if l {
-                            return left;
-                        }
-                        match right {
-                            Object::Bool(_) => {
-                                return right;
-                            }
-                            _ => Object::None,
-                        }
-                    }
-                    _ => Object::None,
-                }
-            }
-            TokenType::AND => {
-                let left = self.left.eval(env.clone());
-                let right = self.right.eval(env);
-                match left {
-                    Object::Bool(l) => {
-                        if !l {
-                            return left;
-                        }
-                        match right {
-                            Object::Bool(_) => {
-                                return right;
-                            }
-                            _ => Object::None,
-                        }
-                    }
-                    _ => Object::None,
-                }
-            }
-            _ => Object::None,
-        }
-    }
 }
 
 impl Parser {
@@ -653,592 +12,459 @@ impl Parser {
         Self { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> Option<Vec<Stmt>> {
+    pub fn parse(&mut self) -> Result<Vec<Stmt>, ()> {
         let mut stmts = Vec::new();
 
-        while self.current < self.tokens.len()
-            && self.tokens[self.current].token_type != TokenType::EOF
-        {
-            let stmt = self.statement()?;
-            stmts.push(stmt);
+        while !self.is_at_end() {
+            stmts.push(self.declaration()?);
         }
 
-        Some(stmts)
+        Ok(stmts)
     }
 
-    fn statement(&mut self) -> Option<Stmt> {
-        if let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::PRINT => {
-                    self.current += 1;
-                    return self.print_statement();
-                }
-                TokenType::IF => {
-                    self.current += 1;
-                    return self.if_statement();
-                }
-                TokenType::FUN => {
-                    self.current += 1;
-                    return self.function();
-                }
-                TokenType::FOR => {
-                    self.current += 1;
-                    return self.for_statement();
-                }
-                TokenType::WHILE => {
-                    self.current += 1;
-                    return self.while_statement();
-                }
-                TokenType::LEFTBRACE => {
-                    self.current += 1;
-                    return self.block_statement();
-                }
-                TokenType::VAR => {
-                    self.current += 1;
-                    return self.var_statement();
-                }
-                _ => {
-                    return self.expression_statement();
-                }
+    fn declaration(&mut self) -> Result<Stmt, ()> {
+        if self.matchh(vec![TokenType::VAR]) {
+            return self.var_decl();
+        }
+        if self.matchh(vec![TokenType::FUN]) {
+            return self.function();
+        }
+
+        self.statement()
+    }
+
+    fn var_decl(&mut self) -> Result<Stmt, ()> {
+        let name = self.consume(&TokenType::IDENTIFIER, "Expect variable name.")?;
+
+        let mut initializer = None;
+        if self.matchh(vec![TokenType::EQUAL]) {
+            initializer = Some(self.expression()?);
+        }
+
+        self.consume(&TokenType::SEMICOLON, "Expect ';' after value.")?;
+        Ok(Stmt::Var(Var {
+            token: name,
+            initializer,
+        }))
+    }
+
+    fn statement(&mut self) -> Result<Stmt, ()> {
+        if self.matchh(vec![TokenType::PRINT]) {
+            return self.print_stmt();
+        }
+        if self.matchh(vec![TokenType::LEFTBRACE]) {
+            return Ok(Stmt::Block(Block {
+                stmts: self.block()?,
+            }));
+        }
+        if self.matchh(vec![TokenType::IF]) {
+            return self.if_stmt();
+        }
+
+        if self.matchh(vec![TokenType::WHILE]) {
+            return self.while_stmt();
+        }
+
+        if self.matchh(vec![TokenType::FOR]) {
+            return self.for_stmt();
+        }
+
+        self.expr_stmt()
+    }
+
+    fn function(&mut self) -> Result<Stmt, ()> {
+        let name = self.consume(&TokenType::IDENTIFIER, "Expect name.")?;
+        self.consume(&TokenType::LEFTPAREN, "Expect '(' after function name.")?;
+
+        let mut params = Vec::new();
+        if !self.check(&TokenType::RIGHTPAREN) {
+            params.push(self.consume(&TokenType::IDENTIFIER, "Expect parameter name.")?);
+
+            while self.matchh(vec![TokenType::COMMA]) {
+                params.push(self.consume(&TokenType::IDENTIFIER, "Expect parameter name.")?);
             }
         }
 
-        None
+        self.consume(&TokenType::RIGHTPAREN, "Expect ')' after parameters.")?;
+
+        self.consume(&TokenType::LEFTBRACE, "Expect '{' before function body.")?;
+
+        let body = self.block()?;
+
+        Ok(Stmt::Func(Func { name, body, params }))
     }
 
-    fn function(&mut self) -> Option<Stmt> {
-        if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
-            println!("not identifier after `fun`");
-            return None;
-        }
+    fn for_stmt(&mut self) -> Result<Stmt, ()> {
+        self.consume(&TokenType::LEFTPAREN, "Expect '(' after 'for'.")?;
 
-        let name = self.peek().unwrap().clone();
-        self.current += 1;
-
-        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
-            println!("not left paren after identifier");
-            return None;
-        }
-
-        self.current += 1;
-        let mut parameters = Vec::new();
-
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
-                println!("not identifier after left paren");
-                return None;
-            }
-
-            parameters.push(self.tokens[self.current].clone());
-            self.current += 1;
-        }
-
-        while self.tokens[self.current].token_type == TokenType::COMMA {
-            self.current += 1;
-            if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
-                println!("not identifier after comma");
-                return None;
-            }
-            parameters.push(self.tokens[self.current].clone());
-            self.current += 1;
-        }
-
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            println!("couldn't find rightparen");
-            return None;
-        }
-
-        self.current += 1;
-        if self.tokens[self.current].token_type != TokenType::LEFTBRACE {
-            println!("couldn't find leftbrace");
-            return None;
-        }
-
-        self.current += 1;
-        let mut body = Vec::new();
-
-        while self.current < self.tokens.len()
-            && self.tokens[self.current].token_type != TokenType::RIGHTBRACE
-        {
-            let stmt = self.statement()?;
-            body.push(stmt);
-        }
-
-        self.current += 1;
-
-        let function = Stmt::Fun(FunStmt {
-            name: name.lexeme.clone().unwrap(),
-            params: parameters,
-            body,
-        });
-        println!("parsed function successfully");
-        Some(function)
-    }
-
-    fn for_statement(&mut self) -> Option<Stmt> {
-        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
-            return None;
-        }
-
-        self.current += 1;
-
-        let initializer;
-        if self.tokens[self.current].token_type == TokenType::SEMICOLON {
-            initializer = None;
-        } else if self.tokens[self.current].token_type == TokenType::VAR {
-            self.current += 1;
-            initializer = Some(self.var_statement()?);
+        let initializer = if self.matchh(vec![TokenType::SEMICOLON]) {
+            None
+        } else if self.matchh(vec![TokenType::VAR]) {
+            Some(self.var_decl()?)
         } else {
-            initializer = Some(self.expression_statement()?);
-        }
+            Some(self.expr_stmt()?)
+        };
 
-        let mut condition = None;
-        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
-            condition = Some(self.expr()?);
-        }
+        let condition = if !self.check(&TokenType::SEMICOLON) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
 
-        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
-            return None;
-        }
+        self.consume(&TokenType::SEMICOLON, "Expect ';' after loop condition.")?;
 
-        self.current += 1;
+        let increment = if !self.check(&TokenType::RIGHTPAREN) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
 
-        let mut increment = None;
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            increment = Some(self.expr()?);
-        }
-
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            return None;
-        }
-
-        self.current += 1;
+        self.consume(&TokenType::RIGHTPAREN, "Expect ')' after loop clauses.")?;
 
         let mut body = self.statement()?;
 
         if let Some(i) = increment {
-            body = Stmt::BlockStmt(BlockStmt {
+            body = Stmt::Block(Block {
                 stmts: vec![body, Stmt::ExprStmt(i)],
             });
         }
 
-        match condition {
-            Some(_) => (),
-            _ => {
-                condition = Some(Expr::Lit(Literal {
+        if let Some(c) = condition {
+            body = Stmt::While(WhileStmt {
+                condition: c,
+                body: Box::new(body),
+            });
+        } else {
+            body = Stmt::While(WhileStmt {
+                condition: Expr::Literal(Literal {
                     value: Object::Bool(true),
-                }));
-            }
+                }),
+                body: Box::new(body),
+            });
         }
 
-        body = Stmt::While(Box::new(WhileStmt {
-            condition: condition.unwrap(),
-            block: body,
-        }));
-
         if let Some(i) = initializer {
-            body = Stmt::BlockStmt(BlockStmt {
+            body = Stmt::Block(Block {
                 stmts: vec![i, body],
             });
         }
 
-        Some(body)
-    }
-    fn while_statement(&mut self) -> Option<Stmt> {
-        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
-            return None;
-        }
-
-        self.current += 1;
-        let condition = self.expr()?;
-
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            return None;
-        }
-
-        self.current += 1;
-
-        let block = self.statement()?;
-
-        Some(Stmt::While(Box::new(WhileStmt { condition, block })))
+        Ok(body)
     }
 
-    fn if_statement(&mut self) -> Option<Stmt> {
-        if self.tokens[self.current].token_type != TokenType::LEFTPAREN {
-            return None;
-        }
+    fn while_stmt(&mut self) -> Result<Stmt, ()> {
+        self.consume(&TokenType::LEFTPAREN, "Expect '(' after 'if'.")?;
 
-        self.current += 1;
-        let condition = self.expr()?;
+        let condition = self.expression()?;
 
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            return None;
-        }
+        self.consume(&TokenType::RIGHTPAREN, "Expect ')' after condition.")?;
 
-        self.current += 1;
+        let body = self.statement()?;
 
-        let then_block = self.statement()?;
-        let mut else_block = None;
-        if self.current < self.tokens.len()
-            && self.tokens[self.current].token_type == TokenType::ELSE
-        {
-            self.current += 1;
-            else_block = Some(self.statement()?);
-        }
-
-        Some(Stmt::If(Box::new(IfStmt {
+        Ok(Stmt::While(WhileStmt {
             condition,
-            then_block,
-            else_block,
-        })))
-    }
-
-    fn block_statement(&mut self) -> Option<Stmt> {
-        let mut stmts = Vec::new();
-
-        while self.current < self.tokens.len()
-            && self.tokens[self.current].token_type != TokenType::RIGHTBRACE
-        {
-            let stmt = self.statement()?;
-            stmts.push(stmt);
-        }
-
-        self.current += 1;
-
-        Some(Stmt::BlockStmt(BlockStmt { stmts }))
-    }
-
-    fn var_statement(&mut self) -> Option<Stmt> {
-        if self.tokens[self.current].token_type != TokenType::IDENTIFIER {
-            return None;
-        }
-
-        let name = self.tokens[self.current].clone();
-        self.current += 1;
-
-        let mut value: Option<Expr> = None;
-        if self.tokens[self.current].token_type == TokenType::EQUAL {
-            self.current += 1;
-            value = Some(self.expr()?);
-        }
-
-        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
-            return None;
-        }
-
-        self.current += 1;
-
-        Some(Stmt::VarStmt(VarStmt {
-            name: name.lexeme.unwrap(),
-            value,
+            body: Box::new(body),
         }))
     }
 
-    fn print_statement(&mut self) -> Option<Stmt> {
-        let expr = self.expr()?;
+    fn if_stmt(&mut self) -> Result<Stmt, ()> {
+        self.consume(&TokenType::LEFTPAREN, "Expect '(' after if statement.")?;
 
-        if self.tokens[self.current].token_type != TokenType::SEMICOLON {
-            return None;
+        let condition = self.expression()?;
+
+        self.consume(&TokenType::RIGHTPAREN, "Expect ')' after condition.")?;
+
+        let then_block = self.statement()?;
+        let mut else_block = None;
+
+        if self.check(&TokenType::ELSE) {
+            else_block = Some(Box::new(self.statement()?));
         }
 
-        self.current += 1;
-
-        Some(Stmt::Print(expr))
+        Ok(Stmt::If(IfStmt {
+            condition,
+            then_block: Box::new(then_block),
+            else_block,
+        }))
     }
 
-    fn expression_statement(&mut self) -> Option<Stmt> {
-        let expr = self.expr()?;
+    fn block(&mut self) -> Result<Vec<Stmt>, ()> {
+        let mut stmts = Vec::new();
 
-        if self.current < self.tokens.len()
-            && self.tokens[self.current].token_type != TokenType::SEMICOLON
-        {
-            return None;
+        while !self.is_at_end() && !self.check(&TokenType::RIGHTBRACE) {
+            stmts.push(self.declaration()?);
         }
 
-        self.current += 1;
+        self.consume(&TokenType::RIGHTBRACE, "Expect '}' after block.")?;
 
-        Some(Stmt::ExprStmt(expr))
+        Ok(stmts)
     }
 
-    fn expr(&mut self) -> Option<Expr> {
+    fn print_stmt(&mut self) -> Result<Stmt, ()> {
+        let expr = self.expression()?;
+
+        self.consume(&TokenType::SEMICOLON, "Expect ';' after value.")?;
+
+        Ok(Stmt::Print(Print { expr }))
+    }
+
+    fn expr_stmt(&mut self) -> Result<Stmt, ()> {
+        let expr = self.expression()?;
+
+        self.consume(&TokenType::SEMICOLON, "Expect ';' after value.")?;
+
+        Ok(Stmt::ExprStmt(expr))
+    }
+
+    fn expression(&mut self) -> Result<Expr, ()> {
         self.assignment()
     }
 
-    fn primary(&mut self) -> Option<Expr> {
-        if !self.is_at_end() {
-            let token = &self.tokens[self.current];
-            match token.token_type {
-                TokenType::NUMBER | TokenType::STRING => {
-                    self.current += 1;
-                    return Some(Expr::Lit(Literal {
-                        value: token.literal.clone(),
-                    }));
-                }
-                TokenType::IDENTIFIER => {
-                    self.current += 1;
-                    return Some(Expr::Var(VarExpr {
-                        name: token.lexeme.clone().unwrap(),
-                    }));
-                }
-                TokenType::TRUE => {
-                    self.current += 1;
-                    return Some(Expr::Lit(Literal {
-                        value: Object::Bool(true),
-                    }));
-                }
-
-                TokenType::FALSE => {
-                    self.current += 1;
-                    return Some(Expr::Lit(Literal {
-                        value: Object::Bool(false),
-                    }));
-                }
-
-                TokenType::NIL => {
-                    self.current += 1;
-                    return Some(Expr::Lit(Literal {
-                        value: Object::None,
-                    }));
-                }
-
-                TokenType::LEFTPAREN => {
-                    self.current += 1;
-                    let expr = self.expr()?;
-                    match self.tokens[self.current].token_type {
-                        TokenType::RIGHTPAREN => {
-                            self.current += 1;
-                            return Some(Expr::Group(Box::new(Grouping { expr })));
-                        }
-                        _ => return None,
-                    }
-                }
-                _ => {
-                    return None;
-                }
-            }
-        } else {
-            None
+    fn primary(&mut self) -> Result<Expr, ()> {
+        if self.matchh(vec![TokenType::FALSE]) {
+            return Ok(Expr::Literal(Literal {
+                value: Object::Bool(false),
+            }));
         }
+        if self.matchh(vec![TokenType::TRUE]) {
+            return Ok(Expr::Literal(Literal {
+                value: Object::Bool(true),
+            }));
+        }
+        if self.matchh(vec![TokenType::NIL]) {
+            return Ok(Expr::Literal(Literal {
+                value: Object::None,
+            }));
+        }
+
+        if self.matchh(vec![TokenType::NUMBER, TokenType::STRING]) {
+            return Ok(Expr::Literal(Literal {
+                value: self.previous().literal,
+            }));
+        }
+
+        if self.matchh(vec![TokenType::LEFTPAREN]) {
+            let expr = self.expression()?;
+            self.consume(&TokenType::RIGHTPAREN, "Expect ')' after expression")?;
+            return Ok(Expr::Grouping(Grouping {
+                expr: Box::new(expr),
+            }));
+        }
+
+        if self.matchh(vec![TokenType::IDENTIFIER]) {
+            let name = self.previous();
+
+            return Ok(Expr::Var(Variable { name }));
+        }
+
+        self.error(self.peek(), "Expect expression");
+
+        Err(())
     }
 
-    fn finish_call(&mut self, calle: Expr) -> Option<Expr> {
+    fn finish_call(&mut self, calle: Expr) -> Result<Expr, ()> {
         let mut arguments = Vec::new();
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            arguments.push(self.expr()?);
+        if !self.check(&TokenType::RIGHTPAREN) {
+            arguments.push(self.expression()?);
+
+            while self.matchh(vec![TokenType::COMMA]) {
+                arguments.push(self.expression()?);
+            }
         }
 
-        while self.tokens[self.current].token_type == TokenType::COMMA {
-            self.current += 1;
-            arguments.push(self.expr()?);
-        }
+        let paren = self.consume(&TokenType::RIGHTPAREN, "Expect ')' after arguments.")?;
 
-        if self.tokens[self.current].token_type != TokenType::RIGHTPAREN {
-            println!("couldn't find right parent in function call");
-            return None;
-        }
-
-        let paren = self.tokens[self.current].clone();
-        self.current += 1;
-
-        println!("finished parsing function call");
-        return Some(Expr::Call(Box::new(Call {
-            calle,
+        Ok(Expr::Call(Call {
+            calle: Box::new(calle),
             paren,
             arguments,
-        })));
+        }))
     }
 
-    fn call(&mut self) -> Option<Expr> {
+    fn call(&mut self) -> Result<Expr, ()> {
         let mut expr = self.primary()?;
+
         loop {
-            if self.current < self.tokens.len()
-                && self.tokens[self.current].token_type == TokenType::LEFTPAREN
-            {
-                self.current += 1;
+            if self.matchh(vec![TokenType::LEFTPAREN]) {
                 expr = self.finish_call(expr)?;
             } else {
                 break;
             }
         }
 
-        Some(expr)
+        return Ok(expr);
     }
 
-    fn unary(&mut self) -> Option<Expr> {
-        let token = self.tokens[self.current].clone();
-        if !self.is_at_end()
-            && (token.token_type == TokenType::BANG || token.token_type == TokenType::MINUS)
-        {
-            self.current += 1;
+    fn unary(&mut self) -> Result<Expr, ()> {
+        if self.matchh(vec![TokenType::BANG, TokenType::MINUS]) {
+            let operator = self.previous();
+            let expr = self.unary()?;
+
+            return Ok(Expr::Unary(Unary {
+                operator: operator,
+                right: Box::new(expr),
+            }));
+        }
+
+        return self.call();
+    }
+
+    fn factor(&mut self) -> Result<Expr, ()> {
+        let mut expr = self.unary()?;
+
+        while self.matchh(vec![TokenType::SLASH, TokenType::STAR]) {
+            let operator = self.previous();
             let right = self.unary()?;
-            return Some(Expr::Unary(Box::new(Unary {
-                operator: token.token_type.clone(),
-                right,
-            })));
+            expr = Expr::Binary(Binary {
+                left: Box::new(expr),
+                operator: operator,
+                right: Box::new(right),
+            });
         }
 
-        self.call()
+        Ok(expr)
     }
 
-    fn factor(&mut self) -> Option<Expr> {
-        let mut left = self.unary()?;
-        while let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::STAR | TokenType::SLASH => {
-                    let operator = self.tokens[self.current].token_type.clone();
-                    self.current += 1;
-                    let right = self.unary()?;
-                    left = Expr::Binary(Box::new(Binary {
-                        left,
-                        operator,
-                        right,
-                    }));
-                }
-                _ => break,
-            }
+    fn term(&mut self) -> Result<Expr, ()> {
+        let mut expr = self.factor()?;
+
+        while self.matchh(vec![TokenType::PLUS, TokenType::MINUS]) {
+            let operator = self.previous();
+            let right = self.factor()?;
+            expr = Expr::Binary(Binary {
+                left: Box::new(expr),
+                operator: operator,
+                right: Box::new(right),
+            });
         }
 
-        Some(left)
+        Ok(expr)
     }
 
-    fn term(&mut self) -> Option<Expr> {
-        let mut left = self.factor()?;
-        while let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::PLUS | TokenType::MINUS => {
-                    let operator = self.tokens[self.current].token_type.clone();
-                    self.current += 1;
-                    let right = self.factor()?;
-                    left = Expr::Binary(Box::new(Binary {
-                        left,
-                        operator,
-                        right,
-                    }));
-                }
-                _ => break,
-            }
+    fn comparision(&mut self) -> Result<Expr, ()> {
+        let mut expr = self.term()?;
+
+        while self.matchh(vec![
+            TokenType::GREATER,
+            TokenType::GREATEREQUAL,
+            TokenType::LESS,
+            TokenType::LESSEQUAL,
+        ]) {
+            let operator = self.previous();
+            let right = self.factor()?;
+            expr = Expr::Binary(Binary {
+                left: Box::new(expr),
+                operator: operator,
+                right: Box::new(right),
+            });
         }
 
-        Some(left)
+        Ok(expr)
     }
 
-    fn comparision(&mut self) -> Option<Expr> {
-        let mut left = self.term()?;
-        while let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::GREATER
-                | TokenType::LESS
-                | TokenType::GREATEREQUAL
-                | TokenType::LESSEQUAL => {
-                    let operator = self.tokens[self.current].token_type.clone();
-                    self.current += 1;
-                    let right = self.term()?;
-                    left = Expr::Binary(Box::new(Binary {
-                        left,
-                        operator,
-                        right,
-                    }));
-                }
-                _ => break,
-            }
+    fn and(&mut self) -> Result<Expr, ()> {
+        let left = self.comparision()?;
+
+        while self.matchh(vec![TokenType::AND]) {
+            let operator = self.previous();
+            let right = self.comparision()?;
+            return Ok(Expr::Logical(Logical {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            }));
         }
 
-        Some(left)
+        return Ok(left);
     }
 
-    fn equality(&mut self) -> Option<Expr> {
-        let mut left = self.comparision()?;
-        while let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::EQUALEQUAL | TokenType::BANGEQUAL => {
-                    let operator = self.tokens[self.current].token_type.clone();
-                    self.current += 1;
-                    let right = self.comparision()?;
-                    left = Expr::Binary(Box::new(Binary {
-                        left,
-                        operator,
-                        right,
-                    }));
-                }
-                _ => break,
-            }
+    fn or(&mut self) -> Result<Expr, ()> {
+        let left = self.and()?;
+
+        while self.matchh(vec![TokenType::OR]) {
+            let operator = self.previous();
+            let right = self.and()?;
+            return Ok(Expr::Logical(Logical {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            }));
         }
 
-        Some(left)
+        Ok(left)
     }
 
-    fn and(&mut self) -> Option<Expr> {
-        let mut left = self.equality()?;
-
-        while let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::AND => {
-                    let operator = self.tokens[self.current].token_type.clone();
-                    self.current += 1;
-                    let right = self.equality()?;
-                    left = Expr::Binary(Box::new(Binary {
-                        left,
-                        operator,
-                        right,
-                    }));
-                }
-                _ => break,
-            }
-        }
-
-        Some(left)
-    }
-
-    fn or(&mut self) -> Option<Expr> {
-        let mut left = self.and()?;
-
-        while let Some(token) = self.peek() {
-            match token.token_type {
-                TokenType::OR => {
-                    let operator = self.tokens[self.current].token_type.clone();
-                    self.current += 1;
-                    let right = self.and()?;
-                    left = Expr::Binary(Box::new(Binary {
-                        left,
-                        operator,
-                        right,
-                    }));
-                }
-                _ => break,
-            }
-        }
-
-        Some(left)
-    }
-
-    fn assignment(&mut self) -> Option<Expr> {
+    fn assignment(&mut self) -> Result<Expr, ()> {
         let expr = self.or()?;
 
-        if self.current < self.tokens.len()
-            && self.tokens[self.current].token_type == TokenType::EQUAL
-        {
-            self.current += 1;
-            let value = self.or()?;
+        if self.matchh(vec![TokenType::EQUAL]) {
+            let equals = self.previous();
+            let value = self.assignment()?;
 
-            match expr {
-                Expr::Var(v) => {
-                    return Some(Expr::Assign(Box::new(Assign {
-                        name: v.name.clone(),
-                        value: value,
-                    })));
-                }
-                _ => return None,
+            if let Expr::Var(v) = expr {
+                return Ok(Expr::Assign(Assign {
+                    name: v.name,
+                    value: Box::new(value),
+                }));
             }
+
+            self.error(equals, "Invalid assignment target.");
+            return Err(());
         }
 
-        Some(expr)
+        return Ok(expr);
+    }
+
+    fn error(&self, token: Token, message: &str) {
+        if token.token_type == TokenType::EOF {
+            eprintln!("[Line: {}] at {} '{}'", token.line, "end", message);
+        } else {
+            eprintln!("[Line: {}] at {:?} '{}'", token.line, token.lexeme, message);
+        };
     }
 
     fn is_at_end(&self) -> bool {
-        self.current >= self.tokens.len() || self.tokens[self.current].token_type == TokenType::EOF
+        self.peek().token_type == TokenType::EOF
     }
 
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.current)
+    fn peek(&self) -> Token {
+        self.tokens[self.current].clone()
+    }
+
+    fn previous(&self) -> Token {
+        self.tokens[self.current - 1].clone()
+    }
+
+    fn advance(&mut self) -> Token {
+        if !self.is_at_end() {
+            self.current += 1;
+        }
+
+        self.previous()
+    }
+
+    fn check(&self, token_type: &TokenType) -> bool {
+        self.peek().token_type == *token_type
+    }
+
+    fn matchh(&mut self, types: Vec<TokenType>) -> bool {
+        for t in &types {
+            if self.check(t) {
+                self.advance();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    fn consume(&mut self, token_type: &TokenType, message: &str) -> Result<Token, ()> {
+        if self.check(token_type) {
+            return Ok(self.advance());
+        }
+
+        self.error(self.peek(), message);
+
+        Err(())
     }
 }

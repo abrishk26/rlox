@@ -1,4 +1,5 @@
-use rlox::parser::{Interpreter, Parser};
+use rlox::parser::Parser;
+use rlox::interpreter::Interpreter;
 use rlox::scanner::Scanner;
 use std::env;
 
@@ -14,18 +15,15 @@ fn main() {
 
 fn run(source: String) {
     let tokens = Scanner::new(source.chars().peekable()).scan_tokens();
-    println!("tokens {:?}", tokens);
-    let stmts = Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
-        .parse()
-        .unwrap();
-    println!("stmts {:?}", stmts);
-    Interpreter::new(stmts).parse();
-    // Interpreter::new(
-    //     Parser::new(Scanner::new(source.chars().peekable()).scan_tokens())
-    //         .parse()
-    //         .unwrap(),
-    // )
-    // .parse();
+    match tokens {
+        Some(t) => match Parser::new(t).parse() {
+            Ok(e) => {
+                (&mut Interpreter::new()).interpret(e);
+            }
+            _ => std::process::exit(67),
+        },
+        None => std::process::exit(67),
+    }
 }
 
 fn run_file(path: &str) {
