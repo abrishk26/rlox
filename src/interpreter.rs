@@ -2,8 +2,10 @@ use crate::expressions::{
     Assign, Binary, Call, Expr, Function, Grouping, Literal, Logical, Unary, Variable, VisitableE,
     VisitorE,
 };
-use crate::statements::{Block, Func, IfStmt, Print, Stmt, Var, VisitableS, VisitorS, WhileStmt};
 use crate::scanner::{Object, Token, TokenType};
+use crate::statements::{
+    Block, Func, IfStmt, Print, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
+};
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 pub struct RuntimeError {
@@ -84,27 +86,29 @@ impl Interpreter {
         return expr.accept(self);
     }
 
-    pub fn execute(&mut self, stmt: &mut Stmt) -> Result<(), RuntimeError> {
-        return stmt.accept(self);
+    pub fn execute(&mut self, stmt: &mut Stmt) -> Result<Option<Object>, RuntimeError> {
+        stmt.accept(self)
     }
 
     pub fn execute_block(
         &mut self,
         stmts: &mut Vec<Stmt>,
         env: Rc<RefCell<Environment>>,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Option<Object>, RuntimeError> {
         let prev = env.clone();
         let new_env = Rc::new(RefCell::new(Environment::new(Some(prev.clone()))));
 
         self.env = new_env;
 
         for stmt in stmts.iter_mut() {
-            self.execute(stmt)?;
+            if let Some(r) = self.execute(stmt)? {
+                return Ok(Some(r));
+            }
         }
 
         self.env = prev;
 
-        Ok(())
+        Ok(None)
     }
 
     pub fn interpret(&mut self, mut stmts: Vec<Stmt>) {
@@ -120,16 +124,26 @@ impl Interpreter {
     }
 }
 
-impl VisitorS<Result<(), RuntimeError>> for Interpreter {
-    fn visit_while_stmt(&mut self, stmt: &mut WhileStmt) -> Result<(), RuntimeError> {
-        while self.evaluate(&mut stmt.condition)?.is_truthy() {
-            self.execute(&mut stmt.body)?;
+impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
+    fn visit_return_stmt(&mut self, stmt: &mut ReturnStmt) -> Result<Option<Object>, RuntimeError> {
+        let mut value = Object::None;
+        if let Some(e) = &mut stmt.value {
+            value = self.evaluate(e)?;
         }
 
-        Ok(())
+        Ok(Some(value))
+    }
+    fn visit_while_stmt(&mut self, stmt: &mut WhileStmt) -> Result<Option<Object>, RuntimeError> {
+        while self.evaluate(&mut stmt.condition)?.is_truthy() {
+            if let Some(r) = self.execute(&mut stmt.body)? {
+                return Ok(Some(r));
+            }
+        }
+
+        Ok(None)
     }
 
-    fn visit_var_stmt(&mut self, stmt: &mut Var) -> Result<(), RuntimeError> {
+    fn visit_var_stmt(&mut self, stmt: &mut Var) -> Result<Option<Object>, RuntimeError> {
         let value = match stmt.initializer.clone() {
             Some(ref mut e) => self.evaluate(e)?,
             _ => Object::None,
@@ -137,36 +151,37 @@ impl VisitorS<Result<(), RuntimeError>> for Interpreter {
         self.env
             .borrow_mut()
             .set(stmt.token.clone().lexeme.unwrap(), value);
-        Ok(())
+        Ok(None)
     }
-    fn visit_print(&mut self, stmt: &mut Print) -> Result<(), RuntimeError> {
+
+    fn visit_print(&mut self, stmt: &mut Print) -> Result<Option<Object>, RuntimeError> {
         let value = self.evaluate(&mut stmt.expr.clone())?;
         println!("{}", value);
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_expr_stmt(&mut self, expr: &mut Expr) -> Result<(), RuntimeError> {
+    fn visit_expr_stmt(&mut self, expr: &mut Expr) -> Result<Option<Object>, RuntimeError> {
         self.evaluate(&mut expr.clone())?;
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_block_stmt(&mut self, block: &mut Block) -> Result<(), RuntimeError> {
+    fn visit_block_stmt(&mut self, block: &mut Block) -> Result<Option<Object>, RuntimeError> {
         self.execute_block(&mut block.stmts, self.env.clone())
     }
 
-    fn visit_if_stmt(&mut self, stmt: &mut IfStmt) -> Result<(), RuntimeError> {
+    fn visit_if_stmt(&mut self, stmt: &mut IfStmt) -> Result<Option<Object>, RuntimeError> {
         if self.evaluate(&mut stmt.condition)?.is_truthy() {
-            self.execute(&mut stmt.then_block)?;
+            return self.execute(&mut stmt.then_block);
         } else {
             if let Some(s) = &mut stmt.else_block {
-                self.execute(s)?;
+                return self.execute(s);
             }
         }
 
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_func_stmt(&mut self, stmt: &mut Func) -> Result<(), RuntimeError> {
+    fn visit_func_stmt(&mut self, stmt: &mut Func) -> Result<Option<Object>, RuntimeError> {
         let function = Function {
             name: stmt.name.clone().lexeme.unwrap(),
             body: stmt.body.clone(),
@@ -177,7 +192,7 @@ impl VisitorS<Result<(), RuntimeError>> for Interpreter {
             .borrow_mut()
             .set(stmt.name.clone().lexeme.unwrap(), Object::Func(function));
 
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -187,8 +202,7 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
 
         match &mut calle {
             Object::Func(f) => {
-                f.call(self, expr.arguments.clone())?;
-                return Ok(Object::None);
+                return f.call(self, expr.arguments.clone());
             }
             _ => {
                 return Err(RuntimeError {

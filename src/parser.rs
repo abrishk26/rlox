@@ -1,6 +1,6 @@
 use crate::expressions::{Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable};
-use crate::statements::{Block, Func, IfStmt, Print, Stmt, Var, WhileStmt};
 use crate::scanner::{Object, Token, TokenType};
+use crate::statements::{Block, Func, IfStmt, Print, ReturnStmt, Stmt, Var, WhileStmt};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -52,11 +52,17 @@ impl Parser {
         if self.matchh(vec![TokenType::PRINT]) {
             return self.print_stmt();
         }
+
+        if self.matchh(vec![TokenType::RETURN]) {
+            return self.return_stmt();
+        }
+
         if self.matchh(vec![TokenType::LEFTBRACE]) {
             return Ok(Stmt::Block(Block {
                 stmts: self.block()?,
             }));
         }
+
         if self.matchh(vec![TokenType::IF]) {
             return self.if_stmt();
         }
@@ -70,6 +76,18 @@ impl Parser {
         }
 
         self.expr_stmt()
+    }
+
+    fn return_stmt(&mut self) -> Result<Stmt, ()> {
+        let keyword = self.previous();
+        let mut value = None;
+        if !self.check(&TokenType::SEMICOLON) {
+            value = Some(self.expression()?);
+        }
+
+        self.consume(&TokenType::SEMICOLON, "Expect ';' after return statement.")?;
+
+        Ok(Stmt::Return(ReturnStmt { keyword, value }))
     }
 
     fn function(&mut self) -> Result<Stmt, ()> {
@@ -171,7 +189,6 @@ impl Parser {
         self.consume(&TokenType::LEFTPAREN, "Expect '(' after if statement.")?;
 
         let condition = self.expression()?;
-
         self.consume(&TokenType::RIGHTPAREN, "Expect ')' after condition.")?;
 
         let then_block = self.statement()?;
@@ -347,6 +364,7 @@ impl Parser {
         while self.matchh(vec![
             TokenType::GREATER,
             TokenType::GREATEREQUAL,
+            TokenType::EQUALEQUAL,
             TokenType::LESS,
             TokenType::LESSEQUAL,
         ]) {

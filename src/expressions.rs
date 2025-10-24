@@ -1,6 +1,6 @@
-use crate::statements::Stmt;
 use crate::interpreter::{Interpreter, RuntimeError};
 use crate::scanner::{Object, Token};
+use crate::statements::Stmt;
 
 pub trait VisitorE<T> {
     fn visit_binary(&mut self, expr: &Binary) -> T;
@@ -56,7 +56,7 @@ impl Function {
         &mut self,
         interpreter: &mut Interpreter,
         mut arguments: Vec<Expr>,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Object, RuntimeError> {
         let env = interpreter.env.clone();
         for i in 0..self.params.len() {
             env.borrow_mut().set(
@@ -65,7 +65,10 @@ impl Function {
             );
         }
 
-        interpreter.execute_block(&mut self.body, env)
+        match interpreter.execute_block(&mut self.body, env)? {
+            Some(v) => Ok(v),
+            _ => Ok(Object::None),
+        }
     }
 }
 
@@ -116,4 +119,3 @@ pub struct Call {
     pub paren: Token,
     pub arguments: Vec<Expr>,
 }
-

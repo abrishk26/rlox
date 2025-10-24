@@ -9,6 +9,7 @@ pub trait VisitorS<T> {
     fn visit_if_stmt(&mut self, stmt: &mut IfStmt) -> T;
     fn visit_while_stmt(&mut self, stmt: &mut WhileStmt) -> T;
     fn visit_func_stmt(&mut self, stmt: &mut Func) -> T;
+    fn visit_return_stmt(&mut self, stmt: &mut ReturnStmt) -> T;
 }
 
 pub trait VisitableS<T> {
@@ -24,6 +25,7 @@ pub enum Stmt {
     If(IfStmt),
     While(WhileStmt),
     Func(Func),
+    Return(ReturnStmt),
 }
 
 impl<T> VisitableS<T> for Stmt {
@@ -36,6 +38,7 @@ impl<T> VisitableS<T> for Stmt {
             Self::If(i) => visitor.visit_if_stmt(i),
             Self::While(w) => visitor.visit_while_stmt(w),
             Self::Func(f) => visitor.visit_func_stmt(f),
+            Self::Return(r) => visitor.visit_return_stmt(r),
         }
     }
 }
@@ -74,4 +77,10 @@ pub struct IfStmt {
 pub struct WhileStmt {
     pub condition: Expr,
     pub body: Box<Stmt>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReturnStmt {
+    pub keyword: Token,
+    pub value: Option<Expr>,
 }
