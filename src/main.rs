@@ -21,8 +21,10 @@ fn run(source: String) {
             Ok(mut e) => {
                 let mut interpreter = Interpreter::new();
                 let mut resolver = Resolver::new(Vec::new(), &mut interpreter);
-                resolver.resolve_stmts(&mut e);
-                interpreter.interpret(e);
+                match resolver.resolve_stmts(&mut e) {
+                    Some(_) => interpreter.interpret(e),
+                    _ => std::process::exit(67),
+                }
             }
             _ => std::process::exit(67),
         },
