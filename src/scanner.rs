@@ -25,7 +25,7 @@ pub static KEYWORDS: LazyLock<HashMap<&'static str, TokenType>> = LazyLock::new(
     ])
 });
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TokenType {
     // Single-character tokens.
     LEFTPAREN,
@@ -172,9 +172,9 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn is_alpha(c: char) -> bool {
+    fn is_alpha_numeric(c: char) -> bool {
         match c {
-            '_' | 'a'..='z' | 'A'..='Z' => true,
+            '_' | 'a'..='z' | 'A'..='Z' | '0'..='9' => true,
             _ => false,
         }
     }
@@ -410,7 +410,8 @@ impl<'a> Scanner<'a> {
             }
             '_' | 'a'..='z' | 'A'..='Z' => {
                 let mut buf = String::from(c);
-                while self.source.peek() != None && Scanner::is_alpha(*self.source.peek().unwrap())
+                while self.source.peek() != None
+                    && Scanner::is_alpha_numeric(*self.source.peek().unwrap())
                 {
                     buf.push(*self.source.peek().unwrap());
                     self.source.next();

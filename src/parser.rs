@@ -5,11 +5,16 @@ use crate::statements::{Block, Func, IfStmt, Print, ReturnStmt, Stmt, Var, While
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    new_id: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, current: 0 }
+        Self {
+            tokens,
+            current: 0,
+            new_id: 0,
+        }
     }
 
     pub fn parse(&mut self) -> Result<Vec<Stmt>, ()> {
@@ -155,6 +160,7 @@ impl Parser {
         } else {
             body = Stmt::While(WhileStmt {
                 condition: Expr::Literal(Literal {
+                    id: self.get_new_id(),
                     value: Object::Bool(true),
                 }),
                 body: Box::new(body),
@@ -240,22 +246,26 @@ impl Parser {
     fn primary(&mut self) -> Result<Expr, ()> {
         if self.matchh(vec![TokenType::FALSE]) {
             return Ok(Expr::Literal(Literal {
+                id: self.get_new_id(),
                 value: Object::Bool(false),
             }));
         }
         if self.matchh(vec![TokenType::TRUE]) {
             return Ok(Expr::Literal(Literal {
+                id: self.get_new_id(),
                 value: Object::Bool(true),
             }));
         }
         if self.matchh(vec![TokenType::NIL]) {
             return Ok(Expr::Literal(Literal {
+                id: self.get_new_id(),
                 value: Object::None,
             }));
         }
 
         if self.matchh(vec![TokenType::NUMBER, TokenType::STRING]) {
             return Ok(Expr::Literal(Literal {
+                id: self.get_new_id(),
                 value: self.previous().literal,
             }));
         }
@@ -264,6 +274,7 @@ impl Parser {
             let expr = self.expression()?;
             self.consume(&TokenType::RIGHTPAREN, "Expect ')' after expression")?;
             return Ok(Expr::Grouping(Grouping {
+                id: self.get_new_id(),
                 expr: Box::new(expr),
             }));
         }
@@ -271,7 +282,10 @@ impl Parser {
         if self.matchh(vec![TokenType::IDENTIFIER]) {
             let name = self.previous();
 
-            return Ok(Expr::Var(Variable { name }));
+            return Ok(Expr::Var(Variable {
+                id: self.get_new_id(),
+                name,
+            }));
         }
 
         self.error(self.peek(), "Expect expression");
@@ -290,8 +304,8 @@ impl Parser {
         }
 
         let paren = self.consume(&TokenType::RIGHTPAREN, "Expect ')' after arguments.")?;
-
         Ok(Expr::Call(Call {
+            id: self.get_new_id(),
             calle: Box::new(calle),
             paren,
             arguments,
@@ -318,6 +332,7 @@ impl Parser {
             let expr = self.unary()?;
 
             return Ok(Expr::Unary(Unary {
+                id: self.get_new_id(),
                 operator: operator,
                 right: Box::new(expr),
             }));
@@ -333,6 +348,7 @@ impl Parser {
             let operator = self.previous();
             let right = self.unary()?;
             expr = Expr::Binary(Binary {
+                id: self.get_new_id(),
                 left: Box::new(expr),
                 operator: operator,
                 right: Box::new(right),
@@ -349,12 +365,12 @@ impl Parser {
             let operator = self.previous();
             let right = self.factor()?;
             expr = Expr::Binary(Binary {
+                id: self.get_new_id(),
                 left: Box::new(expr),
                 operator: operator,
                 right: Box::new(right),
             });
         }
-
         Ok(expr)
     }
 
@@ -371,45 +387,47 @@ impl Parser {
             let operator = self.previous();
             let right = self.factor()?;
             expr = Expr::Binary(Binary {
+                id: self.get_new_id(),
                 left: Box::new(expr),
                 operator: operator,
                 right: Box::new(right),
             });
         }
-
         Ok(expr)
     }
 
     fn and(&mut self) -> Result<Expr, ()> {
-        let left = self.comparision()?;
+        let mut left = self.comparision()?;
 
         while self.matchh(vec![TokenType::AND]) {
             let operator = self.previous();
             let right = self.comparision()?;
-            return Ok(Expr::Logical(Logical {
+            left = Expr::Logical(Logical {
+                id: self.get_new_id(),
                 left: Box::new(left),
                 operator,
                 right: Box::new(right),
-            }));
+            });
         }
 
         return Ok(left);
     }
 
     fn or(&mut self) -> Result<Expr, ()> {
-        let left = self.and()?;
+        let mut left = self.and()?;
 
         while self.matchh(vec![TokenType::OR]) {
             let operator = self.previous();
             let right = self.and()?;
-            return Ok(Expr::Logical(Logical {
+            left = Expr::Logical(Logical {
+                id: self.get_new_id(),
                 left: Box::new(left),
                 operator,
                 right: Box::new(right),
-            }));
+            });
         }
 
-        Ok(left)
+        return Ok(left);
     }
 
     fn assignment(&mut self) -> Result<Expr, ()> {
@@ -421,6 +439,7 @@ impl Parser {
 
             if let Expr::Var(v) = expr {
                 return Ok(Expr::Assign(Assign {
+                    id: self.get_new_id(),
                     name: v.name,
                     value: Box::new(value),
                 }));
@@ -484,5 +503,11 @@ impl Parser {
         self.error(self.peek(), message);
 
         Err(())
+    }
+
+    fn get_new_id(&mut self) -> usize {
+        let id = self.new_id;
+        self.new_id += 1;
+        id
     }
 }

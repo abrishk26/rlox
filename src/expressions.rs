@@ -1,6 +1,9 @@
-use crate::interpreter::{Interpreter, RuntimeError};
+use crate::interpreter::{Environment, Interpreter, RuntimeError};
 use crate::scanner::{Object, Token};
 use crate::statements::Stmt;
+use std::{cell::RefCell, rc::Rc};
+
+type ExprID = usize;
 
 pub trait VisitorE<T> {
     fn visit_binary(&mut self, expr: &Binary) -> T;
@@ -29,6 +32,21 @@ pub enum Expr {
     Call(Call),
 }
 
+impl Expr {
+    pub fn get_id(&self) -> usize {
+        match self {
+            Self::Literal(l) => l.id,
+            Self::Binary(b) => b.id,
+            Self::Unary(u) => u.id,
+            Self::Grouping(g) => g.id,
+            Self::Var(v) => v.id,
+            Self::Assign(a) => a.id,
+            Self::Logical(l) => l.id,
+            Self::Call(c) => c.id,
+        }
+    }
+}
+
 impl<T> VisitableE<T> for Expr {
     fn accept(&mut self, visitor: &mut impl VisitorE<T>) -> T {
         match self {
@@ -49,20 +67,20 @@ pub struct Function {
     pub name: String,
     pub body: Vec<Stmt>,
     pub params: Vec<Token>,
+    pub closure: Rc<RefCell<Environment>>,
 }
 
 impl Function {
     pub fn call(
         &mut self,
         interpreter: &mut Interpreter,
-        mut arguments: Vec<Expr>,
+        arguments: Vec<Object>,
     ) -> Result<Object, RuntimeError> {
-        let env = interpreter.env.clone();
+        let env = Rc::new(RefCell::new(Environment::new(Some(self.closure.clone()))));
         for i in 0..self.params.len() {
-            env.borrow_mut().set(
-                self.params[i].clone().lexeme.unwrap(),
-                interpreter.evaluate(&mut arguments[i])?,
-            );
+            env.borrow_mut()
+                .values
+                .insert(self.params[i].clone().lexeme.unwrap(), arguments[i].clone());
         }
 
         match interpreter.execute_block(&mut self.body, env)? {
@@ -74,11 +92,13 @@ impl Function {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Literal {
+    pub id: ExprID,
     pub value: Object,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Binary {
+    pub id: ExprID,
     pub left: Box<Expr>,
     pub operator: Token,
     pub right: Box<Expr>,
@@ -86,6 +106,7 @@ pub struct Binary {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Logical {
+    pub id: ExprID,
     pub left: Box<Expr>,
     pub operator: Token,
     pub right: Box<Expr>,
@@ -93,28 +114,33 @@ pub struct Logical {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Unary {
+    pub id: ExprID,
     pub operator: Token,
     pub right: Box<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Grouping {
+    pub id: ExprID,
     pub expr: Box<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Variable {
+    pub id: ExprID,
     pub name: Token,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assign {
+    pub id: ExprID,
     pub name: Token,
     pub value: Box<Expr>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Call {
+    pub id: ExprID,
     pub calle: Box<Expr>,
     pub paren: Token,
     pub arguments: Vec<Expr>,

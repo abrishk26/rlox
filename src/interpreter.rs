@@ -23,14 +23,33 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Environment {
-    values: HashMap<String, Object>,
-    enclosing: Option<Rc<RefCell<Environment>>>,
+    pub values: HashMap<String, Object>,
+    pub enclosing: Option<Rc<RefCell<Environment>>>,
+}
+
+fn ancestor(mut env: Rc<RefCell<Environment>>, distance: usize) -> Rc<RefCell<Environment>> {
+    for _ in 0..distance {
+        let new_env = env.borrow().enclosing.clone().unwrap();
+        env = new_env;
+    }
+    env
+}
+
+fn get_at(env: Rc<RefCell<Environment>>, distance: usize, name: String) -> Option<Object> {
+    ancestor(env, distance).borrow().values.get(&name).cloned()
+}
+
+fn assign_at(env: Rc<RefCell<Environment>>, distance: usize, name: Token, value: Object) {
+    ancestor(env, distance)
+        .borrow_mut()
+        .values
+        .insert(name.lexeme.unwrap(), value);
 }
 
 impl Environment {
-    fn new(enclosing: Option<Rc<RefCell<Environment>>>) -> Self {
+    pub fn new(enclosing: Option<Rc<RefCell<Environment>>>) -> Self {
         Self {
             values: HashMap::new(),
             enclosing,
@@ -41,47 +60,53 @@ impl Environment {
         self.values.insert(name, value);
     }
 
-    fn get(&self, name: Token) -> Result<Object, RuntimeError> {
-        match self.values.get(&name.clone().lexeme.unwrap()) {
-            Some(v) => Ok(v.clone()),
-            _ => match &self.enclosing {
-                Some(e) => e.borrow().get(name),
-                _ => Err(RuntimeError {
-                    message: "Undefined variable.",
-                    token: name,
-                }),
-            },
-        }
-    }
+    //fn get(&self, name: Token) -> Result<Object, RuntimeError> {
+    //    match self.values.get(&name.clone().lexeme.unwrap()) {
+    //        Some(v) => Ok(v.clone()),
+    //        _ => match &self.enclosing {
+    //            Some(e) => e.borrow().get(name),
+    //            _ => Err(RuntimeError {
+    //                message: "Undefined variable.",
+    //                token: name,
+    //            }),
+    //        },
+    //    }
+    //}
 
-    fn assign(&mut self, name: Token, value: Object) -> Result<Object, RuntimeError> {
-        let key = name.lexeme.clone().unwrap();
-        match self.values.get(&key) {
-            Some(_) => {
-                self.set(key, value.clone());
-                return Ok(value);
-            }
-            _ => match &self.enclosing {
-                Some(e) => e.borrow_mut().assign(name, value),
-                _ => Err(RuntimeError {
-                    message: "Undefined variable.",
-                    token: name,
-                }),
-            },
-        }
-    }
+    //fn assign(&mut self, name: Token, value: Object) -> Result<Object, RuntimeError> {
+    //    let key = name.lexeme.clone().unwrap();
+    //    match self.values.get(&key) {
+    //        Some(_) => {
+    //            self.set(key, value.clone());
+    //            return Ok(value);
+    //        }
+    //        _ => match &self.enclosing {
+    //            Some(e) => e.borrow_mut().assign(name, value),
+    //            _ => Err(RuntimeError {
+    //                message: "Undefined variable.",
+    //                token: name,
+    //            }),
+    //        },
+    //    }
+    //}
 }
 
 pub struct Interpreter {
+    globals: Rc<RefCell<Environment>>,
     pub env: Rc<RefCell<Environment>>,
+    locals: HashMap<usize, usize>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        let global = Rc::new(RefCell::new(Environment::new(None)));
         Self {
-            env: Rc::new(RefCell::new(Environment::new(None))),
+            env: global.clone(),
+            globals: global,
+            locals: HashMap::new(),
         }
     }
+
     pub fn evaluate(&mut self, expr: &mut Expr) -> Result<Object, RuntimeError> {
         return expr.accept(self);
     }
@@ -90,18 +115,22 @@ impl Interpreter {
         stmt.accept(self)
     }
 
+    pub fn resolve(&mut self, value: Expr, depth: usize) {
+        self.locals.insert(value.get_id(), depth);
+    }
+
     pub fn execute_block(
         &mut self,
         stmts: &mut Vec<Stmt>,
         env: Rc<RefCell<Environment>>,
     ) -> Result<Option<Object>, RuntimeError> {
-        let prev = env.clone();
-        let new_env = Rc::new(RefCell::new(Environment::new(Some(prev.clone()))));
+        let prev = self.env.clone();
 
-        self.env = new_env;
+        self.env = env.clone();
 
         for stmt in stmts.iter_mut() {
             if let Some(r) = self.execute(stmt)? {
+                self.env = prev;
                 return Ok(Some(r));
             }
         }
@@ -120,6 +149,19 @@ impl Interpreter {
                     break;
                 }
             }
+        }
+    }
+
+    fn lookup_variable(&mut self, name: Token, expr: Expr) -> Option<Object> {
+        if let Some(d) = self.locals.get(&expr.get_id()) {
+            return get_at(self.env.clone(), *d, name.lexeme.unwrap());
+        } else {
+            return self
+                .globals
+                .borrow()
+                .values
+                .get(&name.lexeme.clone().unwrap())
+                .map(|x| x.clone());
         }
     }
 }
@@ -166,7 +208,10 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
     }
 
     fn visit_block_stmt(&mut self, block: &mut Block) -> Result<Option<Object>, RuntimeError> {
-        self.execute_block(&mut block.stmts, self.env.clone())
+        self.execute_block(
+            &mut block.stmts,
+            Rc::new(RefCell::new(Environment::new(Some(self.env.clone())))),
+        )
     }
 
     fn visit_if_stmt(&mut self, stmt: &mut IfStmt) -> Result<Option<Object>, RuntimeError> {
@@ -182,15 +227,20 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
     }
 
     fn visit_func_stmt(&mut self, stmt: &mut Func) -> Result<Option<Object>, RuntimeError> {
+        let name = stmt.name.clone().lexeme.unwrap();
+
+        self.env.borrow_mut().set(name.clone(), Object::None);
+
         let function = Function {
             name: stmt.name.clone().lexeme.unwrap(),
             body: stmt.body.clone(),
             params: stmt.params.clone(),
+            closure: self.env.clone(),
         };
 
         self.env
             .borrow_mut()
-            .set(stmt.name.clone().lexeme.unwrap(), Object::Func(function));
+            .set(name.clone(), Object::Func(function));
 
         Ok(None)
     }
@@ -199,10 +249,13 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
 impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
     fn visit_call(&mut self, expr: &Call) -> Result<Object, RuntimeError> {
         let mut calle = self.evaluate(&mut expr.calle.clone())?;
-
         match &mut calle {
             Object::Func(f) => {
-                return f.call(self, expr.arguments.clone());
+                let mut args = Vec::new();
+                for arg in expr.arguments.clone().iter_mut() {
+                    args.push(self.evaluate(arg)?);
+                }
+                return f.call(self, args);
             }
             _ => {
                 return Err(RuntimeError {
@@ -235,8 +288,15 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
     }
 
     fn visit_variable(&mut self, expr: &Variable) -> Result<Object, RuntimeError> {
-        self.env.borrow().get(expr.name.clone())
+        match self.lookup_variable(expr.name.clone(), Expr::Var(expr.clone())) {
+            Some(o) => Ok(o),
+            _ => Err(RuntimeError {
+                message: "Undefined variable.",
+                token: expr.name.clone(),
+            }),
+        }
     }
+
     fn visit_binary(&mut self, expr: &Binary) -> Result<Object, RuntimeError> {
         let left = self.evaluate(&mut expr.left.clone())?;
         let right = self.evaluate(&mut expr.right.clone())?;
@@ -390,6 +450,17 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
     fn visit_assign(&mut self, expr: &Assign) -> Result<Object, RuntimeError> {
         let value = self.evaluate(&mut expr.value.clone())?;
 
-        self.env.borrow_mut().assign(expr.name.clone(), value)
+        if let Some(d) = self.locals.get(&expr.id) {
+            assign_at(self.env.clone(), *d, expr.name.clone(), value.clone());
+            // return the value we just assigned
+            Ok(get_at(self.env.clone(), *d, expr.name.lexeme.clone().unwrap()).unwrap())
+        } else {
+            // assign into globals and return the assigned value
+            self.globals
+                .borrow_mut()
+                .values
+                .insert(expr.name.lexeme.clone().unwrap(), value.clone());
+            Ok(value)
+        }
     }
 }
