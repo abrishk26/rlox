@@ -229,8 +229,6 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
     fn visit_func_stmt(&mut self, stmt: &mut Func) -> Result<Option<Object>, RuntimeError> {
         let name = stmt.name.clone().lexeme.unwrap();
 
-        self.env.borrow_mut().set(name.clone(), Object::None);
-
         let function = Function {
             name: stmt.name.clone().lexeme.unwrap(),
             body: stmt.body.clone(),

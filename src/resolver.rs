@@ -39,7 +39,7 @@ impl<'a> Resolver<'a> {
 
     fn declare(&mut self, name: Token) -> Option<()> {
         if self.scopes.is_empty() {
-            return None;
+            return Some(());
         }
 
         if let Some(_) = self.scopes[self.scopes.len() - 1].get(&name.lexeme.clone().unwrap()) {
@@ -60,7 +60,7 @@ impl<'a> Resolver<'a> {
 
     fn define(&mut self, name: Token) -> Option<()> {
         if self.scopes.is_empty() {
-            return None;
+            return Some(());
         }
 
         self.scopes
@@ -148,7 +148,6 @@ impl<'a> VisitorE<Option<()>> for Resolver<'a> {
             );
             return None;
         }
-
         self.resolve_local(Expr::Var(expr.clone()), expr.name.clone());
         Some(())
     }
