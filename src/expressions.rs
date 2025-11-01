@@ -1,7 +1,5 @@
-use crate::interpreter::{Environment, Interpreter, RuntimeError};
 use crate::scanner::{Object, Token};
-use crate::statements::Stmt;
-use std::{cell::RefCell, rc::Rc};
+
 
 type ExprID = usize;
 
@@ -62,33 +60,6 @@ impl<T> VisitableE<T> for Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Function {
-    pub name: String,
-    pub body: Vec<Stmt>,
-    pub params: Vec<Token>,
-    pub closure: Rc<RefCell<Environment>>,
-}
-
-impl Function {
-    pub fn call(
-        &mut self,
-        interpreter: &mut Interpreter,
-        arguments: Vec<Object>,
-    ) -> Result<Object, RuntimeError> {
-        let env = Rc::new(RefCell::new(Environment::new(Some(self.closure.clone()))));
-        for i in 0..self.params.len() {
-            env.borrow_mut()
-                .values
-                .insert(self.params[i].clone().lexeme.unwrap(), arguments[i].clone());
-        }
-
-        match interpreter.execute_block(&mut self.body, env)? {
-            Some(v) => Ok(v),
-            _ => Ok(Object::None),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Literal {

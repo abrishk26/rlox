@@ -1,16 +1,23 @@
 use crate::expressions::{
-    Assign, Binary, Call, Expr, Function, Grouping, Literal, Logical, Unary, Variable, VisitableE,
+    Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable, VisitableE,
     VisitorE,
 };
+use crate::functions::{NativeFunc, Function};
 use crate::scanner::{Object, Token, TokenType};
 use crate::statements::{
-    Block, Func, IfStmt, Print, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
+    Block, Func, IfStmt, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
 };
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 pub struct RuntimeError {
-    message: &'static str,
+    message: String,
     token: Token,
+}
+
+impl RuntimeError {
+    pub fn new(message: String, token: Token) -> Self {
+        Self { message, token }
+    }
 }
 
 impl fmt::Display for RuntimeError {
@@ -99,7 +106,18 @@ pub struct Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        let global = Rc::new(RefCell::new(Environment::new(None)));
+        let global = Rc::new(RefCell::new(Environment {
+            values: HashMap::from([
+                ("input".to_string(), Object::NativeFunc(NativeFunc::INPUT)),
+                (
+                    "println".to_string(),
+                    Object::NativeFunc(NativeFunc::PRINTLN),
+                ),
+                ("print".to_string(), Object::NativeFunc(NativeFunc::PRINT)),
+            ]),
+            enclosing: None,
+        }));
+
         Self {
             env: global.clone(),
             globals: global,
@@ -196,12 +214,6 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
         Ok(None)
     }
 
-    fn visit_print(&mut self, stmt: &mut Print) -> Result<Option<Object>, RuntimeError> {
-        let value = self.evaluate(&mut stmt.expr.clone())?;
-        println!("{}", value);
-        Ok(None)
-    }
-
     fn visit_expr_stmt(&mut self, expr: &mut Expr) -> Result<Option<Object>, RuntimeError> {
         self.evaluate(&mut expr.clone())?;
         Ok(None)
@@ -255,9 +267,17 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 }
                 return f.call(self, args);
             }
+            Object::NativeFunc(f) => {
+                let mut args = Vec::new();
+                for arg in expr.arguments.clone().iter_mut() {
+                    args.push(self.evaluate(arg)?);
+                }
+
+                return f.call(expr.paren.clone(), args);
+            }
             _ => {
                 return Err(RuntimeError {
-                    message: "Can only call functions and classes.",
+                    message: "Can only call functions and classes.".to_owned(),
                     token: expr.paren.clone(),
                 });
             }
@@ -289,7 +309,7 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
         match self.lookup_variable(expr.name.clone(), Expr::Var(expr.clone())) {
             Some(o) => Ok(o),
             _ => Err(RuntimeError {
-                message: "Undefined variable.",
+                message: "Undefined variable.".to_string(),
                 token: expr.name.clone(),
             }),
         }
@@ -304,12 +324,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Num(l - r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers.",
+                    message: "operands must be two numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -317,7 +337,7 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Num(l + r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
@@ -328,12 +348,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                         return Ok(Object::Str(s));
                     }
                     _ => Err(RuntimeError {
-                        message: "operands must be two strings.",
+                        message: "operands must be two strings.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers or two strings.",
+                    message: "operands must be two numbers or two strings.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -341,12 +361,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Num(l * r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers.",
+                    message: "operands must be two numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -354,12 +374,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Num(l / r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers.",
+                    message: "operands must be two numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -367,12 +387,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Bool(l > r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers.",
+                    message: "operands must be two numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -380,12 +400,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Bool(l < r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numberss.",
+                    message: "operands must be two numberss.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -393,12 +413,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Bool(l >= r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers.",
+                    message: "operands must be two numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -406,12 +426,12 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 Object::Num(l) => match right {
                     Object::Num(r) => return Ok(Object::Bool(l <= r)),
                     _ => Err(RuntimeError {
-                        message: "operands must be two numbers.",
+                        message: "operands must be two numbers.".to_string(),
                         token: expr.operator.clone(),
                     }),
                 },
                 _ => Err(RuntimeError {
-                    message: "operands must be two numbers.",
+                    message: "operands must be two numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },
@@ -428,7 +448,7 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
             TokenType::MINUS => match right {
                 Object::Num(n) => return Ok(Object::Num(-1. * n)),
                 _ => Err(RuntimeError {
-                    message: "operands must be numbers.",
+                    message: "operands must be numbers.".to_string(),
                     token: expr.operator.clone(),
                 }),
             },

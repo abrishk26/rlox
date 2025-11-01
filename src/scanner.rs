@@ -1,4 +1,4 @@
-use crate::expressions::Function;
+use crate::functions::{NativeFunc, Function};
 use TokenType::*;
 use std::iter::{Iterator, Peekable};
 use std::str::{Chars, FromStr};
@@ -15,7 +15,6 @@ pub static KEYWORDS: LazyLock<HashMap<&'static str, TokenType>> = LazyLock::new(
         ("if", IF),
         ("nil", NIL),
         ("or", OR),
-        ("print", PRINT),
         ("return", RETURN),
         ("super", SUPER),
         ("this", THIS),
@@ -82,7 +81,7 @@ pub enum Object {
     Str(String),
     Bool(bool),
     Func(Function),
-    //NativeFunc(NativeFunc),
+    NativeFunc(NativeFunc),
     None,
 }
 
@@ -119,6 +118,10 @@ impl PartialEq for Object {
                 Self::None => return true,
                 _ => return false,
             },
+            Self::NativeFunc(l) => match other {
+                Self::NativeFunc(r) => return l == r,
+                _ => return false,
+            },
         }
     }
 }
@@ -130,7 +133,7 @@ impl fmt::Display for Object {
             Self::Str(s) => write!(f, "{}", s),
             Self::Bool(b) => write!(f, "{}", b),
             Self::Func(_) => write!(f, "<user defined> fn"),
-            // Self::NativeFunc(_) => write!(f, "native fn"),
+            Self::NativeFunc(_) => write!(f, "native fn"),
             Self::None => write!(f, "nil"),
         }
     }

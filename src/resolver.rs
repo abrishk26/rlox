@@ -4,7 +4,7 @@ use crate::expressions::{
 use crate::interpreter::Interpreter;
 use crate::scanner::Token;
 use crate::statements::{
-    Block, Func, IfStmt, Print, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
+    Block, Func, IfStmt, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
 };
 use std::collections::HashMap;
 
@@ -183,10 +183,6 @@ impl<'a> VisitorS<Option<()>> for Resolver<'a> {
         self.end_scope();
 
         Some(())
-    }
-
-    fn visit_print(&mut self, stmt: &mut Print) -> Option<()> {
-        self.resolve_expr(&mut stmt.expr)
     }
 
     fn visit_expr_stmt(&mut self, stmt: &mut Expr) -> Option<()> {

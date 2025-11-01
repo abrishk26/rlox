@@ -2,7 +2,6 @@ use crate::expressions::Expr;
 use crate::scanner::Token;
 
 pub trait VisitorS<T> {
-    fn visit_print(&mut self, stmt: &mut Print) -> T;
     fn visit_expr_stmt(&mut self, stmt: &mut Expr) -> T;
     fn visit_var_stmt(&mut self, stmt: &mut Var) -> T;
     fn visit_block_stmt(&mut self, stmt: &mut Block) -> T;
@@ -18,7 +17,6 @@ pub trait VisitableS<T> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt {
-    Print(Print),
     ExprStmt(Expr),
     Var(Var),
     Block(Block),
@@ -31,7 +29,6 @@ pub enum Stmt {
 impl<T> VisitableS<T> for Stmt {
     fn accept(&mut self, visitor: &mut impl VisitorS<T>) -> T {
         match self {
-            Self::Print(p) => visitor.visit_print(p),
             Self::ExprStmt(e) => visitor.visit_expr_stmt(e),
             Self::Var(v) => visitor.visit_var_stmt(v),
             Self::Block(b) => visitor.visit_block_stmt(b),
@@ -48,11 +45,6 @@ pub struct Func {
     pub name: Token,
     pub params: Vec<Token>,
     pub body: Vec<Stmt>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Print {
-    pub expr: Expr,
 }
 
 #[derive(Clone, Debug, PartialEq)]

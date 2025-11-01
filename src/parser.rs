@@ -1,6 +1,6 @@
 use crate::expressions::{Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable};
 use crate::scanner::{Object, Token, TokenType};
-use crate::statements::{Block, Func, IfStmt, Print, ReturnStmt, Stmt, Var, WhileStmt};
+use crate::statements::{Block, Func, IfStmt, ReturnStmt, Stmt, Var, WhileStmt};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -54,10 +54,6 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, ()> {
-        if self.matchh(vec![TokenType::PRINT]) {
-            return self.print_stmt();
-        }
-
         if self.matchh(vec![TokenType::RETURN]) {
             return self.return_stmt();
         }
@@ -221,14 +217,6 @@ impl Parser {
         self.consume(&TokenType::RIGHTBRACE, "Expect '}' after block.")?;
 
         Ok(stmts)
-    }
-
-    fn print_stmt(&mut self) -> Result<Stmt, ()> {
-        let expr = self.expression()?;
-
-        self.consume(&TokenType::SEMICOLON, "Expect ';' after value.")?;
-
-        Ok(Stmt::Print(Print { expr }))
     }
 
     fn expr_stmt(&mut self) -> Result<Stmt, ()> {
