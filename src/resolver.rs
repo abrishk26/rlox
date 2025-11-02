@@ -1,10 +1,11 @@
 use crate::expressions::{
-    Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable, VisitableE, VisitorE,
+    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, Unary, Variable, VisitableE,
+    VisitorE,
 };
 use crate::interpreter::Interpreter;
 use crate::scanner::Token;
 use crate::statements::{
-    Block, Func, IfStmt, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
+    Block, Class, Func, IfStmt, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
 };
 use std::collections::HashMap;
 
@@ -117,6 +118,17 @@ impl<'a> Resolver<'a> {
 }
 
 impl<'a> VisitorE<Option<()>> for Resolver<'a> {
+    fn visit_set(&mut self, expr: &Set) -> Option<()> {
+        self.resolve_expr(&mut expr.value.clone());
+        self.resolve_expr(&mut expr.expr.clone());
+        Some(())
+    }
+
+    fn visit_get(&mut self, expr: &Get) -> Option<()> {
+        self.resolve_expr(&mut expr.expr.clone());
+        Some(())
+    }
+
     fn visit_binary(&mut self, expr: &Binary) -> Option<()> {
         self.resolve_expr(&mut expr.left.clone())?;
         self.resolve_expr(&mut expr.right.clone())
@@ -177,6 +189,12 @@ impl<'a> VisitorE<Option<()>> for Resolver<'a> {
 }
 
 impl<'a> VisitorS<Option<()>> for Resolver<'a> {
+    fn visit_class_stmt(&mut self, stmt: &mut Class) -> Option<()> {
+        self.declare(stmt.name.clone());
+        self.define(stmt.name.clone());
+        Some(())
+    }
+
     fn visit_block_stmt(&mut self, stmt: &mut Block) -> Option<()> {
         self.begin_scope();
         self.resolve_stmts(&mut stmt.stmts)?;

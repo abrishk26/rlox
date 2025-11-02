@@ -1,6 +1,9 @@
-use crate::expressions::{Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable};
-use crate::scanner::{Object, Token, TokenType};
-use crate::statements::{Block, Func, IfStmt, ReturnStmt, Stmt, Var, WhileStmt};
+use crate::expressions::{
+    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, Unary, Variable,
+};
+use crate::scanner::{Token, TokenType};
+use crate::statements::{Block, Class, Func, IfStmt, ReturnStmt, Stmt, Var, WhileStmt};
+use crate::types::Object;
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -31,11 +34,30 @@ impl Parser {
         if self.matchh(vec![TokenType::VAR]) {
             return self.var_decl();
         }
+
+        if self.matchh(vec![TokenType::CLASS]) {
+            return self.class_decl();
+        }
+
         if self.matchh(vec![TokenType::FUN]) {
-            return self.function();
+            return self.function("function".to_string());
         }
 
         self.statement()
+    }
+
+    fn class_decl(&mut self) -> Result<Stmt, ()> {
+        let name = self.consume(&TokenType::IDENTIFIER, "Expect class name.")?;
+        self.consume(&TokenType::LEFTBRACE, "Expect '{' before class body.")?;
+
+        let mut methods = Vec::new();
+
+        while !self.is_at_end() && !self.check(&TokenType::RIGHTBRACE) {
+            methods.push(self.function("method".to_string())?);
+        }
+
+        self.consume(&TokenType::RIGHTBRACE, "Expect '}' after class body.")?;
+        Ok(Stmt::Class(Class { name, methods }))
     }
 
     fn var_decl(&mut self) -> Result<Stmt, ()> {
@@ -91,7 +113,7 @@ impl Parser {
         Ok(Stmt::Return(ReturnStmt { keyword, value }))
     }
 
-    fn function(&mut self) -> Result<Stmt, ()> {
+    fn function(&mut self, _kind: String) -> Result<Stmt, ()> {
         let name = self.consume(&TokenType::IDENTIFIER, "Expect name.")?;
         self.consume(&TokenType::LEFTPAREN, "Expect '(' after function name.")?;
 
@@ -306,6 +328,13 @@ impl Parser {
         loop {
             if self.matchh(vec![TokenType::LEFTPAREN]) {
                 expr = self.finish_call(expr)?;
+            } else if self.matchh(vec![TokenType::DOT]) {
+                let name = self.consume(&TokenType::IDENTIFIER, "Expect identifier after '.'.")?;
+                expr = Expr::Get(Get {
+                    id: self.get_new_id(),
+                    name,
+                    expr: Box::new(expr),
+                });
             } else {
                 break;
             }
@@ -430,6 +459,13 @@ impl Parser {
                     id: self.get_new_id(),
                     name: v.name,
                     value: Box::new(value),
+                }));
+            } else if let Expr::Get(g) = expr {
+                return Ok(Expr::Set(Set {
+                    id: self.get_new_id(),
+                    name: g.name.clone(),
+                    value: Box::new(value),
+                    expr: g.expr,
                 }));
             }
 

@@ -1,12 +1,12 @@
 use crate::expressions::{
-    Assign, Binary, Call, Expr, Grouping, Literal, Logical, Unary, Variable, VisitableE,
+    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, Unary, Variable, VisitableE,
     VisitorE,
 };
-use crate::functions::{NativeFunc, Function};
-use crate::scanner::{Object, Token, TokenType};
+use crate::scanner::{Token, TokenType};
 use crate::statements::{
-    Block, Func, IfStmt, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
+    Block, Class, Func, IfStmt, ReturnStmt, Stmt, Var, VisitableS, VisitorS, WhileStmt,
 };
+use crate::types::{Function, LoxClass, LoxInstance, NativeFunc, Object};
 use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 pub struct RuntimeError {
@@ -80,22 +80,22 @@ impl Environment {
     //    }
     //}
 
-    //fn assign(&mut self, name: Token, value: Object) -> Result<Object, RuntimeError> {
-    //    let key = name.lexeme.clone().unwrap();
-    //    match self.values.get(&key) {
-    //        Some(_) => {
-    //            self.set(key, value.clone());
-    //            return Ok(value);
-    //        }
-    //        _ => match &self.enclosing {
-    //            Some(e) => e.borrow_mut().assign(name, value),
-    //            _ => Err(RuntimeError {
-    //                message: "Undefined variable.",
-    //                token: name,
-    //            }),
-    //        },
-    //    }
-    //}
+    fn assign(&mut self, name: Token, value: Object) -> Result<Object, RuntimeError> {
+        let key = name.lexeme.clone().unwrap();
+        match self.values.get(&key) {
+            Some(_) => {
+                self.set(key, value.clone());
+                return Ok(value);
+            }
+            _ => match &self.enclosing {
+                Some(e) => e.borrow_mut().assign(name, value),
+                _ => Err(RuntimeError {
+                    message: "Undefined variable.".to_string(),
+                    token: name,
+                }),
+            },
+        }
+    }
 }
 
 pub struct Interpreter {
@@ -185,6 +185,18 @@ impl Interpreter {
 }
 
 impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
+    fn visit_class_stmt(&mut self, stmt: &mut Class) -> Result<Option<Object>, RuntimeError> {
+        self.env
+            .borrow_mut()
+            .set(stmt.name.lexeme.clone().unwrap(), Object::None);
+        let klass = LoxClass::new(stmt.name.lexeme.clone().unwrap());
+        self.env
+            .borrow_mut()
+            .assign(stmt.name.clone(), Object::Class(klass))?;
+
+        Ok(None)
+    }
+
     fn visit_return_stmt(&mut self, stmt: &mut ReturnStmt) -> Result<Option<Object>, RuntimeError> {
         let mut value = Object::None;
         if let Some(e) = &mut stmt.value {
@@ -257,6 +269,33 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
 }
 
 impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
+    fn visit_set(&mut self, expr: &Set) -> Result<Object, RuntimeError> {
+        let mut left = self.evaluate(&mut expr.expr.clone())?;
+        if let Object::ClassInstance(i) = &mut left {
+            return i.set(
+                expr.name.lexeme.clone().unwrap(),
+                self.evaluate(&mut expr.value.clone())?,
+            );
+        } else {
+            return Err(RuntimeError::new(
+                "Only instances have properties.".to_string(),
+                expr.name.clone(),
+            ));
+        }
+    }
+
+    fn visit_get(&mut self, expr: &Get) -> Result<Object, RuntimeError> {
+        let left = self.evaluate(&mut expr.expr.clone())?;
+        if let Object::ClassInstance(i) = left {
+            return i.get(expr.name.clone());
+        } else {
+            return Err(RuntimeError::new(
+                "Only instances have properties.".to_string(),
+                expr.name.clone(),
+            ));
+        }
+    }
+
     fn visit_call(&mut self, expr: &Call) -> Result<Object, RuntimeError> {
         let mut calle = self.evaluate(&mut expr.calle.clone())?;
         match &mut calle {
@@ -274,6 +313,11 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 }
 
                 return f.call(expr.paren.clone(), args);
+            }
+            Object::Class(c) => {
+                let instance = LoxInstance::new(c.clone());
+
+                return Ok(Object::ClassInstance(instance));
             }
             _ => {
                 return Err(RuntimeError {

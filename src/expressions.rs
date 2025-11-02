@@ -1,5 +1,5 @@
-use crate::scanner::{Object, Token};
-
+use crate::scanner::Token;
+use crate::types::Object;
 
 type ExprID = usize;
 
@@ -12,6 +12,8 @@ pub trait VisitorE<T> {
     fn visit_assign(&mut self, expr: &Assign) -> T;
     fn visit_logical(&mut self, expr: &Logical) -> T;
     fn visit_call(&mut self, expr: &Call) -> T;
+    fn visit_get(&mut self, expr: &Get) -> T;
+    fn visit_set(&mut self, expr: &Set) -> T;
 }
 
 pub trait VisitableE<T> {
@@ -28,6 +30,8 @@ pub enum Expr {
     Assign(Assign),
     Logical(Logical),
     Call(Call),
+    Get(Get),
+    Set(Set),
 }
 
 impl Expr {
@@ -41,6 +45,8 @@ impl Expr {
             Self::Assign(a) => a.id,
             Self::Logical(l) => l.id,
             Self::Call(c) => c.id,
+            Self::Get(g) => g.id,
+            Self::Set(s) => s.id,
         }
     }
 }
@@ -56,10 +62,11 @@ impl<T> VisitableE<T> for Expr {
             Self::Assign(a) => visitor.visit_assign(a),
             Self::Logical(l) => visitor.visit_logical(l),
             Self::Call(c) => visitor.visit_call(c),
+            Self::Get(g) => visitor.visit_get(g),
+            Self::Set(s) => visitor.visit_set(s),
         }
     }
 }
-
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Literal {
@@ -115,4 +122,19 @@ pub struct Call {
     pub calle: Box<Expr>,
     pub paren: Token,
     pub arguments: Vec<Expr>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Get {
+    pub id: ExprID,
+    pub name: Token,
+    pub expr: Box<Expr>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Set {
+    pub id: ExprID,
+    pub name: Token,
+    pub expr: Box<Expr>,
+    pub value: Box<Expr>,
 }

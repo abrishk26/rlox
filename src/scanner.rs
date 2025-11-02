@@ -1,8 +1,8 @@
-use crate::functions::{NativeFunc, Function};
 use TokenType::*;
+use crate::types::Object;
 use std::iter::{Iterator, Peekable};
 use std::str::{Chars, FromStr};
-use std::{collections::HashMap, fmt, sync::LazyLock};
+use std::{collections::HashMap, sync::LazyLock};
 
 pub static KEYWORDS: LazyLock<HashMap<&'static str, TokenType>> = LazyLock::new(|| {
     HashMap::from([
@@ -73,70 +73,6 @@ pub enum TokenType {
     WHILE,
 
     EOF,
-}
-
-#[derive(Debug, Clone)]
-pub enum Object {
-    Num(f64),
-    Str(String),
-    Bool(bool),
-    Func(Function),
-    NativeFunc(NativeFunc),
-    None,
-}
-
-impl Object {
-    pub fn is_truthy(&self) -> bool {
-        match self {
-            Self::Bool(b) => *b,
-            Self::None => false,
-            _ => true,
-        }
-    }
-}
-
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            Self::Num(l) => match other {
-                Self::Num(r) => return l == r,
-                _ => return false,
-            },
-            Self::Str(l) => match other {
-                Self::Str(r) => return l == r,
-                _ => return false,
-            },
-            Self::Bool(l) => match other {
-                Self::Bool(r) => return l == r,
-                _ => return false,
-            },
-            Self::Func(l) => match other {
-                Self::Func(r) => return l == r,
-                _ => return false,
-            },
-            Self::None => match other {
-                Self::None => return true,
-                _ => return false,
-            },
-            Self::NativeFunc(l) => match other {
-                Self::NativeFunc(r) => return l == r,
-                _ => return false,
-            },
-        }
-    }
-}
-
-impl fmt::Display for Object {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Num(n) => write!(f, "{}", n),
-            Self::Str(s) => write!(f, "{}", s),
-            Self::Bool(b) => write!(f, "{}", b),
-            Self::Func(_) => write!(f, "<user defined> fn"),
-            Self::NativeFunc(_) => write!(f, "native fn"),
-            Self::None => write!(f, "nil"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
