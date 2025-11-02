@@ -196,7 +196,7 @@ impl Parser {
         let then_block = self.statement()?;
         let mut else_block = None;
 
-        if self.check(&TokenType::ELSE) {
+        if self.matchh(vec![TokenType::ELSE]) {
             else_block = Some(Box::new(self.statement()?));
         }
 
