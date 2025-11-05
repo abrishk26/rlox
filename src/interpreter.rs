@@ -420,16 +420,10 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                         token: expr.operator.clone(),
                     }),
                 },
-                Object::Str(l) => match right {
-                    Object::Str(r) => {
+                Object::Str(l) => {
                         let mut s = l.clone();
-                        s.push_str(&r);
+                        s.push_str(&right.to_string());
                         return Ok(Object::Str(s));
-                    }
-                    _ => Err(RuntimeError {
-                        message: "operands must be two strings.".to_string(),
-                        token: expr.operator.clone(),
-                    }),
                 },
                 _ => Err(RuntimeError {
                     message: "operands must be two numbers or two strings.".to_string(),
