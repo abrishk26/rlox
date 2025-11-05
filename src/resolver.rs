@@ -1,6 +1,6 @@
 use crate::expressions::{
-    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, Unary, Variable, VisitableE,
-    VisitorE,
+    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, This, Unary, Variable,
+    VisitableE, VisitorE,
 };
 use crate::interpreter::Interpreter;
 use crate::scanner::Token;
@@ -9,9 +9,17 @@ use crate::statements::{
 };
 use std::collections::HashMap;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum FunctionType {
     FUNCTION,
+    METHOD,
+    INITIALIZER,
+    NONE,
+}
+
+#[derive(Clone)]
+enum ClassType {
+    CLASS,
     NONE,
 }
 
@@ -19,6 +27,7 @@ pub struct Resolver<'a> {
     scopes: Vec<HashMap<String, bool>>,
     interpreter: &'a mut Interpreter,
     current_function: FunctionType,
+    current_class: ClassType,
 }
 
 impl<'a> Resolver<'a> {
@@ -27,6 +36,7 @@ impl<'a> Resolver<'a> {
             scopes,
             interpreter,
             current_function: FunctionType::NONE,
+            current_class: ClassType::NONE,
         }
     }
 
@@ -81,13 +91,11 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_stmt(&mut self, stmt: &mut Stmt) -> Option<()> {
-        stmt.accept(self);
-        Some(())
+        stmt.accept(self)
     }
 
     fn resolve_expr(&mut self, expr: &mut Expr) -> Option<()> {
-        expr.accept(self);
-        Some(())
+        expr.accept(self)
     }
 
     fn resolve_fun(&mut self, func: &mut Func, t: FunctionType) -> Option<()> {
@@ -110,7 +118,7 @@ impl<'a> Resolver<'a> {
     fn resolve_local(&mut self, expr: Expr, name: Token) {
         for i in (0..self.scopes.len()).rev() {
             if self.scopes[i].contains_key(&name.lexeme.clone().unwrap()) {
-                self.interpreter.resolve(expr, self.scopes.len() - 1 + i);
+                self.interpreter.resolve(expr, self.scopes.len() - 1 - i);
                 return;
             }
         }
@@ -118,6 +126,17 @@ impl<'a> Resolver<'a> {
 }
 
 impl<'a> VisitorE<Option<()>> for Resolver<'a> {
+    fn visit_this(&mut self, expr: &This) -> Option<()> {
+        if let ClassType::NONE = self.current_class {
+            eprintln!(
+                "Can't use `this` keyword from top-level code. [Line: {}]",
+                expr.keyword.line
+            );
+            return None;
+        }
+        self.resolve_local(Expr::This(expr.clone()), expr.keyword.clone());
+        Some(())
+    }
     fn visit_set(&mut self, expr: &Set) -> Option<()> {
         self.resolve_expr(&mut expr.value.clone());
         self.resolve_expr(&mut expr.expr.clone());
@@ -190,8 +209,26 @@ impl<'a> VisitorE<Option<()>> for Resolver<'a> {
 
 impl<'a> VisitorS<Option<()>> for Resolver<'a> {
     fn visit_class_stmt(&mut self, stmt: &mut Class) -> Option<()> {
+        let enclosing_class = self.current_class.clone();
+        self.current_class = ClassType::CLASS;
         self.declare(stmt.name.clone());
         self.define(stmt.name.clone());
+
+        self.begin_scope();
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .insert("this".to_string(), true);
+        for method in stmt.methods.iter_mut() {
+            let mut declaration = FunctionType::METHOD;
+            if method.name.lexeme.clone().unwrap() == "init".to_string() {
+                declaration = FunctionType::INITIALIZER;
+            }
+            self.resolve_fun(method, declaration);
+        }
+        self.end_scope();
+        self.current_class = enclosing_class;
+
         Some(())
     }
 
@@ -209,6 +246,9 @@ impl<'a> VisitorS<Option<()>> for Resolver<'a> {
 
     fn visit_var_stmt(&mut self, stmt: &mut Var) -> Option<()> {
         self.declare(stmt.token.clone())?;
+        if let Some(init) = &mut stmt.initializer {
+            self.resolve_expr(init)?;
+        }
         self.define(stmt.token.clone())
     }
 
@@ -245,6 +285,14 @@ impl<'a> VisitorS<Option<()>> for Resolver<'a> {
         }
 
         if let Some(e) = &mut stmt.value {
+            if self.current_function == FunctionType::INITIALIZER {
+                eprintln!(
+                    "Can't return a value from an initializer. [Line: {}]",
+                    stmt.keyword.line
+                );
+                return None;
+            }
+
             self.resolve_expr(e)?;
         }
 

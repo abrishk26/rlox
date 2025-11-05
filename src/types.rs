@@ -9,28 +9,45 @@ use std::{cell::RefCell, rc::Rc};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Function {
     pub name: String,
+    pub is_init: bool,
     pub body: Vec<Stmt>,
     pub params: Vec<Token>,
     pub closure: Rc<RefCell<Environment>>,
 }
 
 impl Function {
+    pub fn bind(&self, instance: LoxInstance) -> Self {
+        let mut environment = Environment::new(Some(self.closure.clone()));
+        environment.set("this".to_string(), Object::ClassInstance(instance));
+
+        Function {
+            name: self.name.clone(),
+            is_init: self.is_init,
+            body: self.body.clone(),
+            params: self.params.clone(),
+            closure: Rc::new(RefCell::new(environment)),
+        }
+    }
+
     pub fn call(
         &mut self,
         interpreter: &mut Interpreter,
         arguments: Vec<Object>,
     ) -> Result<Object, RuntimeError> {
         let env = Rc::new(RefCell::new(Environment::new(Some(self.closure.clone()))));
+
         for i in 0..self.params.len() {
             env.borrow_mut()
                 .values
                 .insert(self.params[i].clone().lexeme.unwrap(), arguments[i].clone());
         }
 
-        match interpreter.execute_block(&mut self.body, env)? {
-            Some(v) => Ok(v),
-            _ => Ok(Object::None),
+        let result = interpreter.execute_block(&mut self.body, env.clone())?;
+        if self.is_init {
+            return Ok(self.closure.borrow().values.get("this").unwrap().clone());
         }
+
+        Ok(result.unwrap_or(Object::None))
     }
 }
 
@@ -115,10 +132,13 @@ impl LoxInstance {
     pub fn get(&self, key: Token) -> Result<Object, RuntimeError> {
         match self.fields.borrow().get(&key.lexeme.clone().unwrap()) {
             Some(v) => Ok(v.clone()),
-            _ => Err(RuntimeError::new(
-                format!("Undefined property {}", key.lexeme.clone().unwrap()),
-                key,
-            )),
+            _ => match self.klass.find_method(key.lexeme.clone().unwrap()) {
+                Some(m) => Ok(Object::Func(m.bind(self.clone()))),
+                _ => Err(RuntimeError::new(
+                    format!("Undefined property {}", key.lexeme.clone().unwrap()),
+                    key,
+                )),
+            },
         }
     }
 
@@ -131,11 +151,16 @@ impl LoxInstance {
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoxClass {
     name: String,
+    methods: HashMap<String, Function>,
 }
 
 impl LoxClass {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: String, methods: HashMap<String, Function>) -> Self {
+        Self { name, methods }
+    }
+
+    pub fn find_method(&self, name: String) -> Option<Function> {
+        self.methods.get(&name).map(|f| f.clone())
     }
 }
 

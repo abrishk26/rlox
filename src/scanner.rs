@@ -1,5 +1,5 @@
-use TokenType::*;
 use crate::types::Object;
+use TokenType::*;
 use std::iter::{Iterator, Peekable};
 use std::str::{Chars, FromStr};
 use std::{collections::HashMap, sync::LazyLock};
@@ -357,8 +357,12 @@ impl<'a> Scanner<'a> {
                 }
                 match KEYWORDS.get(buf.as_str()) {
                     Some(k) => {
+                        let lexeme = match k {
+                            TokenType::THIS => Some("this".to_string()),
+                            _ => None,
+                        };
                         self.tokens
-                            .push(Token::new(k.clone(), self.line, None, Object::None))
+                            .push(Token::new(k.clone(), self.line, lexeme, Object::None))
                     }
                     None => self.tokens.push(Token::new(
                         TokenType::IDENTIFIER,

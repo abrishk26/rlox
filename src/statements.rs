@@ -46,7 +46,7 @@ impl<T> VisitableS<T> for Stmt {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Class {
     pub name: Token,
-    pub methods: Vec<Stmt>,
+    pub methods: Vec<Func>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

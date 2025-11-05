@@ -14,6 +14,7 @@ pub trait VisitorE<T> {
     fn visit_call(&mut self, expr: &Call) -> T;
     fn visit_get(&mut self, expr: &Get) -> T;
     fn visit_set(&mut self, expr: &Set) -> T;
+    fn visit_this(&mut self, expr: &This) -> T;
 }
 
 pub trait VisitableE<T> {
@@ -32,6 +33,7 @@ pub enum Expr {
     Call(Call),
     Get(Get),
     Set(Set),
+    This(This),
 }
 
 impl Expr {
@@ -47,6 +49,7 @@ impl Expr {
             Self::Call(c) => c.id,
             Self::Get(g) => g.id,
             Self::Set(s) => s.id,
+            Self::This(t) => t.id,
         }
     }
 }
@@ -64,6 +67,7 @@ impl<T> VisitableE<T> for Expr {
             Self::Call(c) => visitor.visit_call(c),
             Self::Get(g) => visitor.visit_get(g),
             Self::Set(s) => visitor.visit_set(s),
+            Self::This(t) => visitor.visit_this(t),
         }
     }
 }
@@ -137,4 +141,10 @@ pub struct Set {
     pub name: Token,
     pub expr: Box<Expr>,
     pub value: Box<Expr>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct This {
+    pub id: ExprID,
+    pub keyword: Token,
 }

@@ -1,5 +1,5 @@
 use crate::expressions::{
-    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, Unary, Variable,
+    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, This, Unary, Variable,
 };
 use crate::scanner::{Token, TokenType};
 use crate::statements::{Block, Class, Func, IfStmt, ReturnStmt, Stmt, Var, WhileStmt};
@@ -40,7 +40,7 @@ impl Parser {
         }
 
         if self.matchh(vec![TokenType::FUN]) {
-            return self.function("function".to_string());
+            return Ok(Stmt::Func(self.function("function".to_string())?));
         }
 
         self.statement()
@@ -113,7 +113,7 @@ impl Parser {
         Ok(Stmt::Return(ReturnStmt { keyword, value }))
     }
 
-    fn function(&mut self, _kind: String) -> Result<Stmt, ()> {
+    fn function(&mut self, _kind: String) -> Result<Func, ()> {
         let name = self.consume(&TokenType::IDENTIFIER, "Expect name.")?;
         self.consume(&TokenType::LEFTPAREN, "Expect '(' after function name.")?;
 
@@ -132,7 +132,7 @@ impl Parser {
 
         let body = self.block()?;
 
-        Ok(Stmt::Func(Func { name, body, params }))
+        Ok(Func { name, body, params })
     }
 
     fn for_stmt(&mut self) -> Result<Stmt, ()> {
@@ -254,6 +254,12 @@ impl Parser {
     }
 
     fn primary(&mut self) -> Result<Expr, ()> {
+        if self.matchh(vec![TokenType::THIS]) {
+            return Ok(Expr::This(This {
+                id: self.get_new_id(),
+                keyword: self.previous(),
+            }));
+        }
         if self.matchh(vec![TokenType::FALSE]) {
             return Ok(Expr::Literal(Literal {
                 id: self.get_new_id(),

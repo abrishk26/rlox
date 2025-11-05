@@ -1,6 +1,6 @@
 use crate::expressions::{
-    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, Unary, Variable, VisitableE,
-    VisitorE,
+    Assign, Binary, Call, Expr, Get, Grouping, Literal, Logical, Set, This, Unary, Variable,
+    VisitableE, VisitorE,
 };
 use crate::scanner::{Token, TokenType};
 use crate::statements::{
@@ -44,7 +44,7 @@ fn ancestor(mut env: Rc<RefCell<Environment>>, distance: usize) -> Rc<RefCell<En
     env
 }
 
-fn get_at(env: Rc<RefCell<Environment>>, distance: usize, name: String) -> Option<Object> {
+pub fn get_at(env: Rc<RefCell<Environment>>, distance: usize, name: String) -> Option<Object> {
     ancestor(env, distance).borrow().values.get(&name).cloned()
 }
 
@@ -145,7 +145,6 @@ impl Interpreter {
         let prev = self.env.clone();
 
         self.env = env.clone();
-
         for stmt in stmts.iter_mut() {
             if let Some(r) = self.execute(stmt)? {
                 self.env = prev;
@@ -189,7 +188,23 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
         self.env
             .borrow_mut()
             .set(stmt.name.lexeme.clone().unwrap(), Object::None);
-        let klass = LoxClass::new(stmt.name.lexeme.clone().unwrap());
+
+        let mut methods = HashMap::new();
+        for method in stmt.methods.clone() {
+            let name = method.name.lexeme.clone().unwrap();
+            methods.insert(
+                name.clone(),
+                Function {
+                    name: method.name.lexeme.unwrap(),
+                    is_init: name.clone() == "init".to_string(),
+                    body: method.body,
+                    params: method.params,
+                    closure: self.env.clone(),
+                },
+            );
+        }
+
+        let klass = LoxClass::new(stmt.name.lexeme.clone().unwrap(), methods);
         self.env
             .borrow_mut()
             .assign(stmt.name.clone(), Object::Class(klass))?;
@@ -255,6 +270,7 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
 
         let function = Function {
             name: stmt.name.clone().lexeme.unwrap(),
+            is_init: false,
             body: stmt.body.clone(),
             params: stmt.params.clone(),
             closure: self.env.clone(),
@@ -269,6 +285,17 @@ impl VisitorS<Result<Option<Object>, RuntimeError>> for Interpreter {
 }
 
 impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
+    fn visit_this(&mut self, expr: &This) -> Result<Object, RuntimeError> {
+        if let Some(o) = self.lookup_variable(expr.keyword.clone(), Expr::This(expr.clone())) {
+            Ok(o)
+        } else {
+            Err(RuntimeError::new(
+                "Undeclared variable this".to_string(),
+                expr.keyword.clone(),
+            ))
+        }
+    }
+
     fn visit_set(&mut self, expr: &Set) -> Result<Object, RuntimeError> {
         let mut left = self.evaluate(&mut expr.expr.clone())?;
         if let Object::ClassInstance(i) = &mut left {
@@ -315,7 +342,15 @@ impl VisitorE<Result<Object, RuntimeError>> for Interpreter {
                 return f.call(expr.paren.clone(), args);
             }
             Object::Class(c) => {
+                let mut args = Vec::new();
+                for arg in expr.arguments.clone().iter_mut() {
+                    args.push(self.evaluate(arg)?);
+                }
+
                 let instance = LoxInstance::new(c.clone());
+                if let Some(init_method) = c.find_method("init".to_string()) {
+                    init_method.bind(instance.clone()).call(self, args)?;
+                }
 
                 return Ok(Object::ClassInstance(instance));
             }
